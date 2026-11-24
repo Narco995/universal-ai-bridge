@@ -30,6 +30,31 @@ class BridgeWorkflowTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_auto_manual_execution_mode_is_separate_and_persisted(self):
+        auto_task = self.service.create_task(
+            "Record autonomous execution preference",
+            ["Keep execution policy separate from collection policy"],
+            mode="independent",
+            execution_mode="auto",
+        )
+        self.assertEqual(auto_task["mode"], "independent")
+        self.assertEqual(auto_task["execution_mode"], "auto")
+        self.assertEqual(self.service.get_task(auto_task["task_id"])["execution_mode"], "auto")
+        self.assertTrue(self.service.verify_event_chain()["valid"])
+
+        manual_task = self.service.create_task(
+            "Record manual execution preference",
+            ["Default to human checkpoints"],
+            mode="open",
+        )
+        self.assertEqual(manual_task["execution_mode"], "manual")
+        with self.assertRaises(ValueError):
+            self.service.create_task(
+                "Reject unknown execution policy",
+                ["Only supported modes are accepted"],
+                execution_mode="unattended",
+            )
+
     def test_sealed_positions_are_hidden_until_reveal(self):
         claude = self.service.submit_position(self.task_id, "claude", "Use append-only SQLite events")
         self.service.submit_position(self.task_id, "gpt", "Use mutable JSON snapshots")
@@ -359,6 +384,27 @@ class BridgeWorkflowTests(unittest.TestCase):
             database = Path(directory) / "legacy.sqlite3"
             with sqlite3.connect(database) as db:
                 db.execute(
+                    """CREATE TABLE tasks (
+                        task_id TEXT PRIMARY KEY,
+                        objective TEXT NOT NULL,
+                        acceptance_criteria_json TEXT NOT NULL,
+                        mode TEXT NOT NULL,
+                        required_authors_json TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        revealed_at TEXT,
+                        current_decision_id TEXT
+                    )"""
+                )
+                db.execute(
+                    """INSERT INTO tasks(
+                        task_id, objective, acceptance_criteria_json, mode,
+                        required_authors_json, status, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ("legacy-task", "Legacy task", '["migrated"]', "independent", "[]", "collecting", "2026-01-01", "2026-01-01"),
+                )
+                db.execute(
                     """CREATE TABLE approvals (
                         approval_id TEXT PRIMARY KEY,
                         decision_id TEXT NOT NULL,
@@ -372,6 +418,10 @@ class BridgeWorkflowTests(unittest.TestCase):
             with sqlite3.connect(database) as db:
                 columns = {row[1] for row in db.execute("PRAGMA table_info(approvals)")}
             self.assertTrue({"action_name", "target", "scope", "expires_at"}.issubset(columns))
+            with sqlite3.connect(database) as db:
+                task_columns = {row[1] for row in db.execute("PRAGMA table_info(tasks)")}
+            self.assertIn("execution_mode", task_columns)
+            self.assertEqual(BridgeService(database).get_task("legacy-task")["execution_mode"], "manual")
 
     def test_export_redacts_other_authors_before_reveal(self):
         self.service.submit_position(self.task_id, "claude", "Private initial view A")
