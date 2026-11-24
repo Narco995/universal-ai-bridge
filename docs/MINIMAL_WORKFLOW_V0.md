@@ -1,44 +1,59 @@
-# Minimal collaboration workflow v0
+# Minimal collaboration workflow v0.1
 
 ## Purpose
 
-Prove the smallest useful collaboration workflow before introducing MCP adapters, model-provider integrations, a UI, orchestration policies, or scoring. The CLI and HTTP API both call BridgeService; workflow rules live in one core.
+Prove a small collaboration workflow before adding MCP adapters, model-provider integrations, orchestration policies, a UI, or scoring. CLI and HTTP call the same `BridgeService`; workflow rules live in one application core.
 
 ## State model
 
 `collecting` → `ready_to_reveal` → `revealed` → `decided` or `awaiting_approval` → `approved` / `rejected` / `changes_requested` → `implemented`.
 
-A task becomes `ready_to_reveal` automatically when every required author has submitted, or when the human explicitly closes a non-empty collection. `reveal` is rejected until that condition is met. A task in `changes_requested` may receive a superseding decision; earlier decisions remain in the record.
+A task becomes `ready_to_reveal` when every required author has submitted, or when the owner explicitly closes a non-empty collection. Reveal is rejected until then. A task in `changes_requested` may receive a superseding decision; earlier decisions and their dispositions remain in the history.
 
 ## Data model
 
 - **Task:** objective, acceptance criteria, mode, required author labels, state, current decision.
-- **Position:** author label, body, content hash, timestamp, and `submission_method=manual`.
+- **Principal:** task-scoped owner or participant identity, random bearer-token hash, and creation timestamp.
+- **Position:** author derived from a participant credential on HTTP; body, content hash, timestamp, and `submission_method=manual`.
 - **Decision:** chosen option, rationale, supporting position IDs, considered-not-chosen position IDs, approval requirement, status, and superseded decision link.
-- **Approval:** human actor label, approve/reject/request-changes action, exact action name, target, scope, note, and timestamp.
-- **Artifact:** kind, URI, optional SHA-256, timestamp.
+- **Approval:** human owner action, exact action name, target, scope, note, and expiry.
+- **Artifact:** kind, URI, optional SHA-256, and timestamp.
 - **Event:** append-only audit record with a global hash chain.
 
-## Independence and provenance
+## Identity and sealed positions
 
-In independent mode, a caller sees its own position body while collection is sealed; other authors' bodies become visible after reveal. In open mode, bodies are visible immediately. The HTTP server is loopback-only in v0. The `X-Bridge-Actor` header is a caller-supplied label, not authenticated identity; this filtering is a workflow demonstration, not a security boundary against an untrusted caller. Database-file access also bypasses application filtering. Independent analysis still depends on the human operator using separate model sessions and not cross-sharing drafts before submission. All submissions are explicitly recorded as manual; no live provider connection is claimed.
+Task creation returns one owner bearer token and one separate participant token for each required author. Only token hashes are stored; raw tokens are returned once and are not included in events or timeline exports. Send them using `Authorization: Bearer <token>`.
+
+On HTTP, author identity is derived from the participant token. A request cannot set or override `author`, and `X-Bridge-Actor` is ignored. Participants can submit and read their own position. The owner can administer the task but cannot read participant content while positions are sealed. Reveal makes the positions visible to all task principals.
+
+Only the owner token can close/reveal a collection, record decisions, approve actions, authorize actions, or attach artifacts. Participants cannot use administrative routes.
+
+The CLI is intentionally a trusted local-owner path. It permits the operator to enter manual author labels and inspect the local database. Direct SQLite access also bypasses application filtering. Therefore this v0 workflow is not protection from a malicious database owner or machine administrator.
+
+Independent analysis still depends on the human distributing participant tokens separately and using independent model sessions without cross-sharing drafts before reveal. The Bridge cannot prove that an external AI model authored a manually relayed position. Provider connections are not present.
 
 ## Approval semantics
 
-A decision marked `requires_approval=true` enters `awaiting_approval`. The application accepts approval only with the `human` actor label, but that label is not authenticated in v0. Every approval is bound to an exact action name, target, and scope; an approval for one target or scope cannot authorize another. Approvals expire after 15 minutes by default; an explicit timezone-aware ISO-8601 expiry can be supplied. The conservative default policy allowlists only `read`, `list`, `inspect`, `export`, `status`, and `analyze` as low-risk actions. Every other action name requires a matching, unexpired approval even when the decision flag is false. A decision marked `requires_approval=true` also requires an approved record before artifact attachment. The v0 authorization endpoint records that the check passed but does not execute the requested action. A future tool executor must call the same guard immediately before a side effect, using authenticated identity, capability policy, idempotency, and an audit trail.
+A decision marked `requires_approval=true` enters `awaiting_approval`. A matching owner approval moves the decision to `approved`. Approval records are bound to an exact action name, target, and scope and expire after 15 minutes by default (or at a supplied timezone-aware ISO-8601 expiry).
+
+Every call to `authorize_action` requires a matching, unexpired approval regardless of the caller-selected action name. There is no caller-controlled low-risk action-name allowlist. Read-only GET routes do not call `authorize_action`. This avoids treating an arbitrary label such as `export` as proof that the underlying operation is harmless.
+
+A decision that requires approval also requires a valid, unexpired approval before artifact attachment. The authorization endpoint records that a check passed; it does not execute a side effect. A future executor must use canonical tool identifiers and a capability registry, and must call the authorization guard immediately before the actual side effect.
 
 ## Events and reproducibility
 
-Events include task creation, position submission, collection close/readiness, reveal, decision, approval, action authorization, and artifact attachment. Event rows cannot be updated or deleted through normal SQL operations, and each event hashes its canonical content plus the previous event hash. `verify events` also compares task, position, decision, approval, and artifact projections with their originating events. This detects ordinary event and projection tampering but is not cryptographic non-repudiation: an administrator able to replace the SQLite file can rewrite the chain and projections.
+Events include task creation, principal issuance, position submission, collection close/readiness, reveal, decision, approval, action authorization, and artifact attachment. Events hash their canonical content plus the previous event hash. `verify events` checks the event chain, event-to-projection consistency, principal records, and reconstructs task/decision status from the event sequence.
+
+This detects ordinary event or projection tampering, but is not cryptographic non-repudiation. An administrator able to replace the SQLite file and schema can rewrite the database. The system does not yet store signed checkpoints off-host.
 
 ## Acceptance criteria mapping
 
-1. **Sealed positions:** service and HTTP tests verify that author A cannot retrieve author B's body in independent mode before reveal, and can after reveal.
-2. **Preservation:** decision records contain the selected and considered-not-chosen position IDs; export keeps both.
-3. **Reproducibility:** export contains task, positions, reveal/decision/approval events, and artifact pointers; hash-chain verification is tested.
-4. **Approval gate:** consequential/unknown actions fail without an exact action-target-scope approval, even when a caller omits the decision-level approval flag; mismatched approval scope remains blocked.
+1. **Sealed positions:** authenticated participant tokens cannot retrieve other participants' bodies before reveal; owner cannot read sealed bodies; attempts to spoof `X-Bridge-Actor` or submit a different author are ineffective.
+2. **Preservation:** decisions link supporting and considered-not-chosen positions; export retains both.
+3. **Reproducibility:** export includes task, positions, reveal/decision/approval events, and artifact pointers; hash-chain and state-projection verification are tested.
+4. **Approval gate:** every authorization request fails without an exact, unexpired approval, regardless of caller-selected action name. Expired approvals cannot authorize actions or an approval-gated artifact attachment.
 5. **No fake agent links:** health, exports, CLI output, and docs state that submissions are manual and providers are not connected.
 
 ## Explicit non-goals
 
-No cryptographic position sealing, provider authentication, multi-tenant access control, remote deployment, MCP adapter, automatic conflict summarizer, real tool execution, UI, ranking/scoring, or production security claim.
+No MCP adapter, provider APIs, cryptographic position sealing, identity-provider integration, TLS, encryption-at-rest, token rotation/revocation, multi-tenant remote deployment, automatic conflict summarizer, real tool execution, UI, ranking/scoring, or production security claim.
