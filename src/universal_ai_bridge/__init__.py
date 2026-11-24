@@ -7,6 +7,7 @@ from .core import (
     Conflict,
     Forbidden,
     NotFound,
+    Unauthorized,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "Conflict",
     "Forbidden",
     "NotFound",
+    "Unauthorized",
 ]
