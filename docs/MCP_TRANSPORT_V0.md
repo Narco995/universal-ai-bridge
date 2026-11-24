@@ -11,7 +11,7 @@ This creates a real local collaboration boundary:
 - Claude's process authenticates as the `claude` participant.
 - GPT's process authenticates as the `gpt` participant.
 - Grok's process authenticates as the `grok` participant.
-- The founder's process authenticates as the `human` owner.
+- The founder's private process authenticates as the `human` owner. The MCP owner process can administer the workflow, but cannot create human approvals.
 
 The identity is fixed by the process environment; the model cannot pass an `author` argument to impersonate another participant.
 
@@ -44,9 +44,9 @@ uab --db /absolute/path/bridge.sqlite3 task create \
 
 The command prints one-time credentials. Store the owner token securely and distribute each participant token only to its intended MCP host. Do not place tokens in Git, task descriptions, or shared chat transcripts.
 
-A no-token MCP bootstrap process can also call `task_create`. For security, a process that has `UAB_TOKEN` configured does not expose `task_create`; a participant therefore cannot mint new owner credentials.
+Task creation is intentionally performed through the trusted CLI or loopback HTTP API, not through an MCP tool. A process without `UAB_TOKEN` exposes only `bridge_health`. This keeps one-time owner and participant credentials out of model-visible MCP tool results.
 
-For an optional participant not included at task creation, the owner may call `participant_issue` while collection remains open. This issues a token but does not make the new participant a required author for automatic collection completion.
+For an optional participant not included at task creation, the human owner may run `uab participant issue TASK_ID --name grok` or use the owner-only HTTP route while collection remains open. This issues a token but does not make the new participant a required author for automatic collection completion.
 
 ## Configure each MCP host
 
@@ -66,7 +66,7 @@ Use an absolute path to the installed `uab-mcp` executable and the same absolute
 }
 ```
 
-Create separate entries for GPT and Grok, replacing the server name and token. Configure the founder's private Bridge process with `credentials.owner_token`. Never share the owner token with a participant model; it grants reveal, decision, approval, and artifact administration privileges.
+Create separate entries for GPT and Grok, replacing the server name and token. Configure the founder's private Bridge process with `credentials.owner_token`. Never share the owner token with a participant model; it grants reveal, decision, action-authorization, and artifact-administration privileges. Human approvals remain outside the MCP tool surface.
 
 The SDK's stdio client launches this command as a subprocess. The server writes protocol messages to stdout; diagnostics are sent to stderr. Do not wrap the command in scripts that print banners or other text to stdout.
 
@@ -77,21 +77,19 @@ Environment variables are read at process startup. Restart the MCP host after ro
 | Tool | Access | Purpose |
 |---|---|---|
 | `bridge_health` | Public | Report health and truthful manual/not-connected status |
-| `task_create` | Bootstrap only | Create a task and return one-time credentials |
 | `task_get` | Owner or participant | Read task metadata |
-| `participant_issue` | Owner | Issue an optional participant credential |
 | `position_submit` | Participant | Submit a position as the authenticated author |
 | `positions_list` | Owner or participant | Read own sealed position; all positions after reveal |
-| `collection_close` | Owner | Close a non-empty collection |
-| `positions_reveal` | Owner | Reveal positions |
+| `positions_reveal` | Owner | Reveal positions only when collection is ready |
 | `decision_record` | Owner | Record the choice and considered objections |
-| `approval_record` | Owner | Record decision-acceptance or action-specific approval |
 | `action_authorize` | Owner | Check exact action/target/scope approval; does not execute |
-| `artifact_attach` | Owner | Attach an implementation artifact pointer |
+| `artifact_attach` | Owner | Attach an implementation artifact pointer, subject to decision approval |
 | `timeline_export` | Owner or participant | Export the view permitted to this identity |
-| `event_chain_verify` | Owner | Verify the global event chain and projections |
+| `event_chain_verify` | Owner | Verify the global event chain, projections, and reconstructed state |
 
-A decision marked as requiring approval needs a separate `decision_acceptance` approval bound to its task ID and decision ID. A consequential action then needs its own matching action-name, target, and scope approval. Both approvals must be unexpired. The Bridge does not execute side effects in this version.
+The following operations are intentionally **not MCP tools**: task creation, participant credential issuance, early/manual collection close, and recording human approvals. Use the trusted CLI or owner HTTP API for these operations. This prevents an agent connected to an owner MCP process from minting credentials, forcing an early reveal, or approving its own consequential action.
+
+A decision marked as requiring approval needs a separate `decision_acceptance` approval bound to its task ID and decision ID. A consequential action then needs its own matching action-name, target, and scope approval. Both approvals must be unexpired. The MCP server cannot create either approval; the human uses the trusted CLI or HTTP API. The Bridge does not execute side effects in this version.
 
 ## Local configuration and limitations
 
@@ -111,6 +109,7 @@ The MCP tests cover:
 2. Two participant processes sharing a database while sealed positions remain private.
 3. Owner-only reveal and post-reveal visibility.
 4. Participant inability to call owner-only tools.
-5. A real stdio subprocess handshake and tool call using its own task-scoped token.
+5. The owner MCP process cannot issue credentials, close collection early, or record human approvals.
+6. A real stdio subprocess handshake and tool call using its own task-scoped token.
 
 The project uses the official Python SDK's `MCPServer` and stdio transport. See the upstream [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) for protocol and transport details.
