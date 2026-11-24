@@ -126,7 +126,7 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
     async def test_bootstrap_process_can_create_task_and_returns_scoped_credentials(self):
         with tempfile.TemporaryDirectory() as tmp:
             database = Path(tmp) / "bridge.sqlite3"
-            bootstrap = build_mcp_server(database, token=None)
+            bootstrap = build_mcp_server(database, token="")
             async with Client(bootstrap) as client:
                 listing = await client.list_tools()
                 self.assertIn("task_create", {tool.name for tool in listing.tools})
