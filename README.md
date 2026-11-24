@@ -32,6 +32,8 @@ python -m unittest discover -s tests -v
 
 The CLI is a trusted local-owner interface. It prints task credentials when a task is created; protect that output. CLI author labels are operator-supplied because this path is intended for a single trusted administrator, not separate remote participants.
 
+The `--mode` flag selects collection mode (`independent` or `open`). The separate `--execution-mode` flag records an Auto/Manual policy preference (default `manual`). v0.1 persists this choice but does not yet execute actions automatically; protected actions still require human approval.
+
 Example:
 
 ```bash
@@ -40,6 +42,7 @@ uab --db ./bridge.sqlite3 task create \
   --criteria "Preserve dissent" \
   --criteria "Block unapproved consequential actions" \
   --mode independent \
+  --execution-mode manual \
   --required-author claude \
   --required-author gpt
 
@@ -128,7 +131,7 @@ Never use this version to authorize real external side effects or as a productio
 
 1. Obtain independent Claude/Grok review of the actual diff and adversarial tests; no external review is claimed yet.
 2. Add authenticated provider adapters for Claude, GPT, and Grok with explicit manual/automatic provenance.
-3. Implement the standard directive → execution → independent critique → revision orchestrator, including the first-critique revision rule, five-round cap, and distinct Auto/Manual execution modes.
+3. Implement the standard directive → execution → independent critique → revision orchestrator, including the first-critique revision rule, five-round cap, and runtime behavior for the persisted Auto/Manual execution modes.
 4. Add a canonical capability/tool registry and an executor that enforces approvals immediately before side effects.
 5. Add authenticated Streamable HTTP MCP for remote-capable hosts, with an explicit credential/transport strategy.
 6. Complete token rotation/revocation, signed audit anchoring, security, recovery, concurrency, and operational testing before any remote deployment.
