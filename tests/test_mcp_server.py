@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from mcp import Client
+from mcp.server.mcpserver.exceptions import UnexpectedToolError
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from universal_ai_bridge.core import BridgeService
@@ -31,7 +32,7 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
 
             async with (
                 Client(claude_server) as claude,
-                Client(gpt_server, raise_exceptions=False) as gpt,
+                Client(gpt_server) as gpt,
                 Client(owner_server) as owner,
             ):
                 listing = await claude.list_tools()
@@ -41,7 +42,6 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("timeline_export", names)
                 for human_only_tool in ("task_create", "participant_issue", "collection_close", "approval_record"):
                     self.assertNotIn(human_only_tool, names)
-                self.assertNotIn("task_create", names)
 
                 claude_submit = await claude.call_tool(
                     "position_submit",
@@ -71,8 +71,8 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                     all("content" not in position for position in owner_view.structured_content["positions"])
                 )
 
-                denied_reveal = await gpt.call_tool("positions_reveal", {"task_id": task_id})
-                self.assertTrue(denied_reveal.is_error)
+                with self.assertRaises(UnexpectedToolError):
+                    await gpt.call_tool("positions_reveal", {"task_id": task_id})
 
                 reveal = await owner.call_tool("positions_reveal", {"task_id": task_id})
                 self.assertFalse(reveal.is_error)
@@ -100,9 +100,9 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                     "scope": "release 1.0",
                 }
                 owner_server_with_errors = build_mcp_server(database, credentials["owner_token"])
-                async with Client(owner_server_with_errors, raise_exceptions=False) as restricted_owner:
-                    blocked = await restricted_owner.call_tool("action_authorize", action_args)
-                    self.assertTrue(blocked.is_error)
+                async with Client(owner_server_with_errors) as restricted_owner:
+                    with self.assertRaises(UnexpectedToolError):
+                        await restricted_owner.call_tool("action_authorize", action_args)
 
                 # Simulate the human principal approving through the trusted CLI/HTTP path.
                 service.record_approval(
@@ -123,26 +123,16 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(integrity.is_error)
                 self.assertTrue(integrity.structured_content["valid"])
 
-    async def test_bootstrap_process_can_create_task_and_returns_scoped_credentials(self):
+    async def test_uncredentialed_mcp_process_exposes_health_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             database = Path(tmp) / "bridge.sqlite3"
             bootstrap = build_mcp_server(database, token="")
             async with Client(bootstrap) as client:
                 listing = await client.list_tools()
-                self.assertIn("task_create", {tool.name for tool in listing.tools})
-                created = await client.call_tool(
-                    "task_create",
-                    {
-                        "objective": "Bootstrap a collaboration task",
-                        "acceptance_criteria": ["Issue separate participant identities"],
-                        "mode": "independent",
-                        "required_authors": ["claude", "gpt"],
-                    },
-                )
-                self.assertFalse(created.is_error)
-                credentials = created.structured_content["credentials"]
-                self.assertTrue(credentials["owner_token"])
-                self.assertEqual(set(credentials["participant_tokens"]), {"claude", "gpt"})
+                self.assertEqual({tool.name for tool in listing.tools}, {"bridge_health"})
+                health = await client.call_tool("bridge_health", {})
+                self.assertFalse(health.is_error)
+                self.assertEqual(health.structured_content["agent_connections"], "not_connected")
 
     async def test_stdio_entrypoint_uses_its_process_token_and_shared_database(self):
         with tempfile.TemporaryDirectory() as tmp:
