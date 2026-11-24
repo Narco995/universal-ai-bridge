@@ -86,7 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--output", help="write to a file instead of stdout")
     export.add_argument("--viewer", default="human")
 
-    verify = commands.add_parser("verify", help="verify the append-only event hash chain")
+    verify = commands.add_parser("verify", help="verify event hashes, projections, and reconstructed workflow state")
     verify.add_argument("subcommand", nargs="?", choices=["events"], default="events")
 
     server = commands.add_parser("serve", help="start the loopback-only HTTP API")
