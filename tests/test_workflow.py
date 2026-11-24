@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from universal_ai_bridge import ApprovalRequired, BridgeService, Conflict, Forbidden, Unauthorized, Unauthorized
+from universal_ai_bridge import ApprovalRequired, BridgeService, Conflict, Forbidden, Unauthorized
 
 
 class BridgeWorkflowTests(unittest.TestCase):
