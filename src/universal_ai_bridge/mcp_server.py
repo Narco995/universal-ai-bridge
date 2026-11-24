@@ -57,16 +57,17 @@ def build_mcp_server(
             "transport": "mcp_stdio",
         }
 
-    @server.tool()
-    def task_create(
-        objective: str,
-        acceptance_criteria: list[str],
-        mode: str = "independent",
-        required_authors: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Create a collaboration task and return one-time owner/participant credentials."""
-        return service.create_task(objective, acceptance_criteria, mode, required_authors)
-
+    if not process_token:
+        @server.tool()
+        def task_create(
+            objective: str,
+            acceptance_criteria: list[str],
+            mode: str = "independent",
+            required_authors: list[str] | None = None,
+        ) -> dict[str, Any]:
+            """Create a collaboration task and return one-time owner/participant credentials."""
+            return service.create_task(objective, acceptance_criteria, mode, required_authors)
+    
     @server.tool()
     def task_get(task_id: str) -> dict[str, Any]:
         """Read task metadata using this process's task-scoped credential."""
