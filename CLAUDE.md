@@ -30,7 +30,7 @@ For architecture, strategy, security, high-impact, or otherwise consequential de
 4. Reveal only after all required authors submit or the human explicitly closes collection.
 5. Record overlaps, disagreements, supporting positions, and considered-but-not-chosen positions.
 
-Use `open` mode for routine work where the independence benefit does not justify the ceremony. Independent analysis is real only when participants use separate sessions and do not see one another's drafts before submission. Until provider adapters and authenticated identity exist, submissions are manual relays; never claim that an author label proves an external model submitted the content.
+Use `open` mode for routine work where the independence benefit does not justify the ceremony. Independent analysis is real only when participants use separate sessions and do not see one another's drafts before submission. Until provider adapters and provider-account identity binding exist, submissions are manual relays; task-scoped bearer credentials authenticate a Bridge participant slot, not an external model account.
 
 ## Directive and execution contract
 
