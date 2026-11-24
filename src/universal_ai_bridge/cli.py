@@ -60,6 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     approval.add_argument("--action-name", required=True)
     approval.add_argument("--target", required=True)
     approval.add_argument("--scope", required=True)
+    approval.add_argument("--expires-at", help="optional ISO-8601 expiry with timezone; defaults to 15 minutes")
 
     action = commands.add_parser("action", help="check whether an action is authorized")
     action.add_argument("task_id")
@@ -114,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
             _print(service.record_approval(
                 args.task_id, args.action, args.note,
                 action_name=args.action_name, target=args.target, scope=args.scope,
+                expires_at=args.expires_at,
             ))
         elif args.command == "action":
             _print(service.authorize_action(
