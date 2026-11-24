@@ -46,12 +46,14 @@ class BridgeService:
     """SQLite-backed workflow. All transports should call this service."""
 
     TERMINAL_VISIBLE_STATES = {"revealed", "decided", "awaiting_approval", "approved", "rejected", "changes_requested", "implemented"}
+    LOW_RISK_ACTIONS = {"read", "list", "inspect", "export", "status", "analyze"}
 
     def __init__(self, database: str | Path = "bridge.sqlite3") -> None:
-        self.database = str(database)
-        if self.database == ":memory:":
+        raw_database = str(database)
+        if raw_database == ":memory:":
             raise ValueError("a persistent SQLite file path is required; :memory: is not supported across Bridge connections")
-        Path(self.database).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+        self.database = str(Path(raw_database).expanduser().resolve())
+        Path(self.database).parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -126,6 +128,9 @@ class BridgeService:
                     decision_id TEXT NOT NULL REFERENCES decisions(decision_id),
                     actor TEXT NOT NULL,
                     action TEXT NOT NULL CHECK (action IN ('approve', 'reject', 'request_changes')),
+                    action_name TEXT NOT NULL DEFAULT '',
+                    target TEXT NOT NULL DEFAULT '',
+                    scope TEXT NOT NULL DEFAULT '',
                     note TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
@@ -160,6 +165,12 @@ class BridgeService:
                 END;
                 """
             )
+            # Lightweight forward-compatible migration for databases created by
+            # the first v0 draft, before approvals were action-scoped.
+            approval_columns = {row["name"] for row in db.execute("PRAGMA table_info(approvals)").fetchall()}
+            for column in ("action_name", "target", "scope"):
+                if column not in approval_columns:
+                    db.execute(f"ALTER TABLE approvals ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
 
     def _append_event(
         self,
@@ -236,6 +247,8 @@ class BridgeService:
         required_authors: list[str] | None = None,
         actor: str = "human",
     ) -> dict[str, Any]:
+        if not isinstance(objective, str):
+            raise ValueError("objective must be a string")
         objective = objective.strip()
         criteria_input = self._string_list(acceptance_criteria, "acceptance_criteria")
         authors_input = self._string_list(required_authors, "required_authors")
@@ -269,6 +282,8 @@ class BridgeService:
             return self._task_dict(self._task_row(db, task_id))
 
     def submit_position(self, task_id: str, author: str, content: str, actor: str = "human") -> dict[str, Any]:
+        if not isinstance(author, str) or not isinstance(content, str):
+            raise ValueError("author and content must be strings")
         author, content = author.strip(), content.strip()
         if not author or not content:
             raise ValueError("author and content are required")
@@ -359,6 +374,8 @@ class BridgeService:
         requires_approval: bool = False,
         actor: str = "human",
     ) -> dict[str, Any]:
+        if not isinstance(choice, str) or not isinstance(rationale, str):
+            raise ValueError("choice and rationale must be strings")
         choice, rationale = choice.strip(), rationale.strip()
         if not choice or not rationale:
             raise ValueError("choice and rationale are required")
@@ -427,43 +444,74 @@ class BridgeService:
             row = db.execute("SELECT * FROM decisions WHERE decision_id = ?", (task["current_decision_id"],)).fetchone()
             return self._decision_dict(row)
 
-    def record_approval(self, task_id: str, action: str, note: str, actor: str = "human") -> dict[str, Any]:
+    def record_approval(
+        self,
+        task_id: str,
+        action: str,
+        note: str,
+        actor: str = "human",
+        action_name: str = "",
+        target: str = "",
+        scope: str = "",
+    ) -> dict[str, Any]:
         if actor != "human":
             raise Forbidden("only the human principal may record an approval")
         if action not in {"approve", "reject", "request_changes"}:
             raise ValueError("action must be approve, reject, or request_changes")
-        note = note.strip()
-        if not note:
-            raise ValueError("an approval note is required")
+        if not all(isinstance(value, str) for value in (note, action_name, target, scope)):
+            raise ValueError("approval note, action_name, target, and scope must be strings")
+        note, action_name, target, scope = note.strip(), action_name.strip(), target.strip(), scope.strip()
+        if not note or not action_name or not target or not scope:
+            raise ValueError("approval requires a note and an exact action_name, target, and scope")
         approval_id, now = _id("approval"), _now()
         with self._transaction() as db:
             task = self._task_row(db, task_id)
             if not task["current_decision_id"]:
                 raise Conflict("there is no decision to approve")
             decision = db.execute("SELECT * FROM decisions WHERE decision_id = ?", (task["current_decision_id"],)).fetchone()
-            if not decision["requires_approval"] or decision["status"] != "awaiting_approval":
-                raise Conflict("the current decision is not awaiting approval")
-            next_status = {"approve": "approved", "reject": "rejected", "request_changes": "changes_requested"}[action]
+            if decision["status"] in {"rejected", "changes_requested"}:
+                raise Conflict(f"the current decision is {decision['status']}")
+            if action in {"reject", "request_changes"} and decision["status"] != "awaiting_approval":
+                raise Conflict("reject/request_changes requires a decision awaiting approval")
+            if action == "approve" and decision["status"] not in {"awaiting_approval", "decided", "approved"}:
+                raise Conflict(f"the current decision cannot be approved while {decision['status']}")
+            next_status = decision["status"]
+            if decision["requires_approval"]:
+                next_status = {"approve": "approved", "reject": "rejected", "request_changes": "changes_requested"}[action]
             db.execute(
-                "INSERT INTO approvals(approval_id, decision_id, actor, action, note, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (approval_id, decision["decision_id"], actor, action, note, now),
+                """INSERT INTO approvals(approval_id, decision_id, actor, action, action_name, target, scope, note, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (approval_id, decision["decision_id"], actor, action, action_name, target, scope, note, now),
             )
-            db.execute("UPDATE decisions SET status = ? WHERE decision_id = ?", (next_status, decision["decision_id"]))
-            db.execute("UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?", (next_status, now, task_id))
+            if next_status != decision["status"]:
+                db.execute("UPDATE decisions SET status = ? WHERE decision_id = ?", (next_status, decision["decision_id"]))
+                db.execute("UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?", (next_status, now, task_id))
             self._append_event(db, "approval_recorded", task_id, actor, {
                 "approval_id": approval_id,
                 "decision_id": decision["decision_id"],
                 "action": action,
+                "action_name": action_name,
+                "target": target,
+                "scope": scope,
                 "note": note,
                 "resulting_status": next_status,
             })
             row = db.execute("SELECT * FROM approvals WHERE approval_id = ?", (approval_id,)).fetchone()
             return dict(row)
 
-    def authorize_action(self, task_id: str, action_name: str, actor: str = "human") -> dict[str, Any]:
-        action_name = action_name.strip()
-        if not action_name:
-            raise ValueError("action_name is required")
+    def authorize_action(
+        self,
+        task_id: str,
+        action_name: str,
+        actor: str = "human",
+        target: str = "",
+        scope: str = "",
+    ) -> dict[str, Any]:
+        if not all(isinstance(value, str) for value in (action_name, target, scope)):
+            raise ValueError("action_name, target, and scope must be strings")
+        action_name, target, scope = action_name.strip(), target.strip(), scope.strip()
+        if not action_name or not target or not scope:
+            raise ValueError("action_name, target, and scope are required")
         with self._transaction() as db:
             task = self._task_row(db, task_id)
             if not task["current_decision_id"]:
@@ -471,17 +519,40 @@ class BridgeService:
             decision = db.execute("SELECT * FROM decisions WHERE decision_id = ?", (task["current_decision_id"],)).fetchone()
             if decision["status"] in {"rejected", "changes_requested"}:
                 raise Conflict(f"current decision is {decision['status']}")
-            if decision["requires_approval"] and decision["status"] != "approved":
-                raise ApprovalRequired("human approval is required before this action")
+            approval_required = bool(decision["requires_approval"]) or action_name not in self.LOW_RISK_ACTIONS
+            if approval_required:
+                approval = db.execute(
+                    """SELECT approval_id FROM approvals
+                       WHERE decision_id = ? AND action = 'approve'
+                         AND action_name = ? AND target = ? AND scope = ?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (decision["decision_id"], action_name, target, scope),
+                ).fetchone()
+                if approval is None:
+                    raise ApprovalRequired(
+                        "human approval is required for this exact action, target, and scope"
+                    )
+                if decision["requires_approval"] and decision["status"] != "approved":
+                    raise ApprovalRequired("the current decision has not been approved")
             if task["status"] not in {"decided", "approved", "implemented"}:
                 raise Conflict(f"task is not in an actionable state: {task['status']}")
             event = self._append_event(db, "action_authorized", task_id, actor, {
                 "action_name": action_name,
+                "target": target,
+                "scope": scope,
                 "decision_id": decision["decision_id"],
+                "approval_required": approval_required,
                 "authorization_only": True,
                 "does_not_execute_side_effect": True,
             })
-            return {"authorized": True, "action_name": action_name, "event_id": event["event_id"], "executed": False}
+            return {
+                "authorized": True,
+                "action_name": action_name,
+                "target": target,
+                "scope": scope,
+                "event_id": event["event_id"],
+                "executed": False,
+            }
 
     def attach_artifact(
         self,
