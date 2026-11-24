@@ -55,10 +55,16 @@ class BridgeWorkflowTests(unittest.TestCase):
         self.service.submit_position(self.task_id, "gpt", "Proposal B")
         self.service.reveal(self.task_id)
         self.service.record_decision(self.task_id, "A", "A meets the criteria", [p1["position_id"]], [], True)
+        action = "modify_shared_infrastructure"
+        target = "repository/main"
+        scope = "change collaboration workflow"
         with self.assertRaises(ApprovalRequired):
-            self.service.authorize_action(self.task_id, "modify_shared_infrastructure")
-        self.service.record_approval(self.task_id, "approve", "Reviewed and approved")
-        self.service.authorize_action(self.task_id, "modify_shared_infrastructure")
+            self.service.authorize_action(self.task_id, action, target=target, scope=scope)
+        self.service.record_approval(
+            self.task_id, "approve", "Reviewed and approved",
+            action_name=action, target=target, scope=scope,
+        )
+        self.service.authorize_action(self.task_id, action, target=target, scope=scope)
         self.service.attach_artifact(self.task_id, "commit", "https://example.invalid/commit/abc", "a" * 64)
         exported = self.service.export_timeline(self.task_id)
         types = [event["event_type"] for event in exported["events"]]
@@ -76,14 +82,57 @@ class BridgeWorkflowTests(unittest.TestCase):
         self.service.reveal(self.task_id)
         decision = self.service.record_decision(self.task_id, "A", "A is safer", requires_approval=True)
         self.assertEqual(decision["status"], "awaiting_approval")
+        action = "change_security_policy"
+        target = "bridge/security-policy"
+        scope = "modify approval enforcement rules"
         with self.assertRaises(ApprovalRequired):
-            self.service.authorize_action(self.task_id, "change_security_policy")
+            self.service.authorize_action(self.task_id, action, target=target, scope=scope)
         with self.assertRaises(ApprovalRequired):
             self.service.attach_artifact(self.task_id, "commit", "https://example.invalid/commit/blocked")
         with self.assertRaises(Forbidden):
-            self.service.record_approval(self.task_id, "approve", "not the principal", actor="gpt")
-        self.service.record_approval(self.task_id, "approve", "Human principal reviewed scope and evidence", actor="human")
-        result = self.service.authorize_action(self.task_id, "change_security_policy")
+            self.service.record_approval(
+                self.task_id, "approve", "not the principal", actor="gpt",
+                action_name=action, target=target, scope=scope,
+            )
+        self.service.record_approval(
+            self.task_id, "approve", "Human principal reviewed scope and evidence", actor="human",
+            action_name=action, target=target, scope=scope,
+        )
+        result = self.service.authorize_action(self.task_id, action, target=target, scope=scope)
+        self.assertTrue(result["authorized"])
+        self.assertFalse(result["executed"])
+
+    def test_high_impact_action_requires_scoped_approval_even_when_decision_flag_is_false(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        self.service.record_decision(self.task_id, "A", "Decision accepted without a global approval flag")
+        action = "deploy"
+        target = "production/api"
+        scope = "release version 1.2.3"
+        with self.assertRaises(ApprovalRequired):
+            self.service.authorize_action(self.task_id, action, target=target, scope=scope)
+        self.service.record_approval(
+            self.task_id, "approve", "Approved for this exact release",
+            action_name=action, target=target, scope=scope,
+        )
+        with self.assertRaises(ApprovalRequired):
+            self.service.authorize_action(self.task_id, action, target="staging/api", scope=scope)
+        with self.assertRaises(ApprovalRequired):
+            self.service.authorize_action(self.task_id, action, target=target, scope="release version 1.2.4")
+        result = self.service.authorize_action(self.task_id, action, target=target, scope=scope)
+        self.assertTrue(result["authorized"])
+        self.assertEqual(result["target"], target)
+        self.assertEqual(result["scope"], scope)
+
+    def test_allowlisted_low_risk_action_does_not_need_scoped_approval(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        self.service.record_decision(self.task_id, "A", "Routine decision")
+        result = self.service.authorize_action(
+            self.task_id, "export", target=self.task_id, scope="read-only timeline export"
+        )
         self.assertTrue(result["authorized"])
         self.assertFalse(result["executed"])
 
