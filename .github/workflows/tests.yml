@@ -31,4 +31,5 @@ jobs:
         run: |
           uab --help
           uab participant issue --help
+          uab task create --help
           uab-mcp --help
