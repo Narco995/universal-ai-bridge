@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import sys
@@ -199,10 +200,16 @@ def build_mcp_server(
 
 def main() -> None:
     """Run the MCP server over stdio for a local MCP host."""
+    parser = argparse.ArgumentParser(description="Universal AI Bridge MCP stdio server")
+    parser.add_argument(
+        "--database",
+        default=os.environ.get("UAB_DATABASE", "bridge.sqlite3"),
+        help="shared SQLite database path (default: UAB_DATABASE or ./bridge.sqlite3)",
+    )
+    args = parser.parse_args()
     logging.basicConfig(level=os.environ.get("UAB_LOG_LEVEL", "WARNING"), stream=sys.stderr)
-    database = os.environ.get("UAB_DATABASE", "bridge.sqlite3")
     token = os.environ.get("UAB_TOKEN")
-    server = build_mcp_server(database, token)
+    server = build_mcp_server(args.database, token)
     server.run(transport="stdio")
 
 
