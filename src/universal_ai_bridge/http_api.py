@@ -12,6 +12,9 @@ class BridgeHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
     def __init__(self, server_address, service: BridgeService):
+        host = server_address[0]
+        if host not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError("v0 HTTP server is loopback-only; external binding requires an authenticated deployment boundary")
         self.service = service
         super().__init__(server_address, BridgeRequestHandler)
 
