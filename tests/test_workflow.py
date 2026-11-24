@@ -433,6 +433,28 @@ class BridgeWorkflowTests(unittest.TestCase):
                 self.task_id, artifact["artifact_id"], "Reviewed the approved implementation"
             )
 
+    def test_action_approval_after_implementation_preserves_completed_state(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        self.service.record_decision(self.task_id, "A", "Selected")
+        artifact = self.service.attach_artifact(
+            self.task_id, "commit", "https://example.invalid/commit/final"
+        )
+        self.service.verify_artifact(
+            self.task_id, artifact["artifact_id"], "Reviewed commit and passing tests"
+        )
+        self.service.record_approval(
+            self.task_id, "approve", "Approved exact release",
+            action_name="release", target="staging", scope="version 0.1",
+        )
+        self.assertEqual(self.service.get_task(self.task_id)["status"], "implemented")
+        authorized = self.service.authorize_action(
+            self.task_id, "release", target="staging", scope="version 0.1"
+        )
+        self.assertTrue(authorized["authorized"])
+        self.assertTrue(self.service.verify_event_chain()["valid"])
+
     def test_artifact_verification_projection_tampering_is_detected(self):
         self.service.submit_position(self.task_id, "claude", "Option A")
         self.service.submit_position(self.task_id, "gpt", "Option B")

@@ -1058,6 +1058,17 @@ class BridgeService:
                     }
                 elif kind == "artifact_verified":
                     artifact_id = payload["artifact_id"]
+                    if (
+                        payload.get("verification_status") != "verified"
+                        or not isinstance(payload.get("note"), str)
+                        or not payload["note"].strip()
+                        or not payload.get("verified_at")
+                    ):
+                        return {
+                            "valid": False,
+                            "event_id": event["event_id"],
+                            "reason": "invalid_artifact_verification_event",
+                        }
                     if artifact_id not in artifact_states:
                         return {
                             "valid": False,
@@ -1082,7 +1093,10 @@ class BridgeService:
                     task_states[task_id]["current_decision_id"] = payload["decision_id"]
                 elif kind == "approval_recorded":
                     decision_states[payload["decision_id"]] = payload["resulting_status"]
-                    if task_states[task_id]["current_decision_id"] == payload["decision_id"]:
+                    if (
+                        task_states[task_id]["current_decision_id"] == payload["decision_id"]
+                        and task_states[task_id]["status"] != "implemented"
+                    ):
                         task_states[task_id]["status"] = payload["resulting_status"]
             for artifact_id, expected in artifact_states.items():
                 projection = db.execute(
