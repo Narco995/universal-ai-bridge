@@ -401,3 +401,83 @@ class BridgeService:
                 "rationale": rationale,
                 "supporting_position_ids": supporting,
                 "considered_not_chosen_position_ids": dissent,
+                "requires_approval": bool(requires_approval),
+                "status": status,
+                "supersedes_decision_id": task["current_decision_id"],
+            })
+            return self._decision_dict(db.execute("SELECT * FROM decisions WHERE decision_id = ?", (decision_id,)).fetchone())
+
+    @staticmethod
+    def _decision_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "decision_id": row["decision_id"],
+            "task_id": row["task_id"],
+            "choice": row["choice"],
+            "rationale": row["rationale"],
+            "supporting_position_ids": json.loads(row["supporting_position_ids_json"]),
+            "considered_not_chosen_position_ids": json.loads(row["considered_not_chosen_ids_json"]),
+            "requires_approval": bool(row["requires_approval"]),
+            "status": row["status"],
+            "supersedes_decision_id": row["supersedes_decision_id"],
+            "created_at": row["created_at"],
+        }
+
+    def get_current_decision(self, task_id: str) -> dict[str, Any] | None:
+        with self._connection() as db:
+            task = self._task_row(db, task_id)
+            if not task["current_decision_id"]:
+                return None
+            row = db.execute("SELECT * FROM decisions WHERE decision_id = ?", (task["current_decision_id"],)).fetchone()
+            return self._decision_dict(row)
+
+    def record_approval(self, task_id: str, action: str, note: str, actor: str = "human") -> dict[str, Any]:
+        if actor != "human":
+            raise Forbidden("only the human principal may record an approval")
+        if action not in {"approve", "reject", "request_changes"}:
+            raise ValueError("action must be approve, reject, or request_changes")
+        note = note.strip()
+        if not note:
+            raise ValueError("an approval note is required")
+        approval_id, now = _id("approval"), _now()
+        with self._transaction() as db:
+            task = self._task_row(db, task_id)
+            if not task["current_decision_id"]:
+                raise Conflict("there is no decision to approve")
+            decision = db.execute("SELECT * FROM decisions WHERE decision_id = ?", (task["current_decision_id"],)).fetchone()
+            if not decision["requires_approval"] or decision["status"] != "awaiting_approval":
+                raise Conflict("the current decision is not awaiting approval")
+            next_status = {"approve": "approved", "reject": "rejected", "request_changes": "changes_requested"}[action]
+            db.execute(
+                "INSERT INTO approvals(approval_id, decision_id, actor, action, note, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (approval_id, decision["decision_id"], actor, action, note, now),
+            )
+            db.execute("UPDATE decisions SET status = ? WHERE decision_id = ?", (next_status, decision["decision_id"]))
+            db.execute("UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?", (next_status, now, task_id))
+            self._append_event(db, "approval_recorded", task_id, actor, {
+                "approval_id": approval_id,
+                "decision_id": decision["decision_id"],
+                "action": action,
+                "note": note,
+                "resulting_status": next_status,
+            })
+            row = db.execute("SELECT * FROM approvals WHERE approval_id = ?", (approval_id,)).fetchone()
+            return dict(row)
+
+    def authorize_action(self, task_id: str, action_name: str, actor: str = "human") -> dict[str, Any]:
+        action_name = action_name.strip()
+        if not action_name:
+            raise ValueError("action_name is required")
+        with self._transaction() as db:
+            task = self._task_row(db, task_id)
+            if not task["current_decision_id"]:
+                raise Conflict("no decision exists for this task")
+            decision = db.execute("SELECT * FROM decisions WHERE decision_id = ?", (task["current_decision_id"],)).fetchone()
+            if decision["status"] in {"rejected", "changes_requested"}:
+                raise Conflict(f"current decision is {decision['status']}")
+            if decision["requires_approval"] and decision["status"] != "approved":
+                raise ApprovalRequired("human approval is required before this action")
+            if task["status"] not in {"decided", "approved", "implemented"}:
+                raise Conflict(f"task is not in an actionable state: {task['status']}")
+            event = self._append_event(db, "action_authorized", task_id, actor, {
+                "action_name": action_name,
+                "decision_id": decision["decision_id"],
