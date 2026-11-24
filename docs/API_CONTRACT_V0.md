@@ -48,11 +48,12 @@ No authentication required. Returns service state and provider provenance.
   "objective": "Choose a persistence design",
   "acceptance_criteria": ["Preserve dissent", "Verify the event history"],
   "mode": "independent",
+  "execution_mode": "manual",
   "required_authors": ["claude", "gpt", "grok"]
 }
 ```
 
-`mode` is `independent` or `open`. Required authors are participant labels; each receives a participant token in the response. If `required_authors` is empty, the owner may issue participants using the route above and must explicitly close the non-empty collection before reveal.
+`mode` is the collection mode (`independent` or `open`). `execution_mode` is a separate policy preference (`auto` or `manual`, default `manual`). v0.1 persists this preference but does not automatically execute actions. Required authors are participant labels; each receives a participant token in the response. If `required_authors` is empty, the owner may issue participants using the route above and must explicitly close the non-empty collection before reveal.
 
 ### Read task
 
