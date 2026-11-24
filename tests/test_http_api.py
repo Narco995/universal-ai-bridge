@@ -74,6 +74,30 @@ class BridgeHTTPTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("JSON boolean", response["message"])
 
+    def test_http_high_impact_action_requires_approval_even_when_decision_flag_is_false(self):
+        _, task = self.request_json("POST", "/tasks", {
+            "objective": "Protect high-impact actions",
+            "acceptance_criteria": ["deploy cannot bypass approval"],
+            "required_authors": ["claude"],
+        })
+        task_id = task["task_id"]
+        self.request_json("POST", f"/tasks/{task_id}/positions", {"author": "claude", "content": "Proposal"})
+        self.request_json("POST", f"/tasks/{task_id}/reveal")
+        self.request_json("POST", f"/tasks/{task_id}/decisions", {
+            "choice": "A", "rationale": "Accepted", "requires_approval": False
+        })
+        request = {"action_name": "deploy", "target": "production", "scope": "release 1.0"}
+        status, response = self.request_json("POST", f"/tasks/{task_id}/actions/authorize", request)
+        self.assertEqual(status, 423)
+        self.assertEqual(response["error"], "ApprovalRequired")
+        self.request_json("POST", f"/tasks/{task_id}/approvals", {
+            "action": "approve", "note": "Approved exact release",
+            "action_name": "deploy", "target": "production", "scope": "release 1.0",
+        })
+        status, response = self.request_json("POST", f"/tasks/{task_id}/actions/authorize", request)
+        self.assertEqual(status, 200)
+        self.assertTrue(response["authorized"])
+
     def test_http_approval_gate_returns_locked_until_approved(self):
         _, task = self.request_json("POST", "/tasks", {
             "objective": "Test approval",
@@ -84,11 +108,16 @@ class BridgeHTTPTests(unittest.TestCase):
         self.request_json("POST", f"/tasks/{task_id}/positions", {"author": "claude", "content": "Proposal"})
         self.request_json("POST", f"/tasks/{task_id}/reveal")
         self.request_json("POST", f"/tasks/{task_id}/decisions", {"choice": "A", "rationale": "It is acceptable", "requires_approval": True})
-        status, response = self.request_json("POST", f"/tasks/{task_id}/actions/authorize", {"action_name": "deploy"})
+        action_request = {"action_name": "deploy", "target": "production/api", "scope": "release version 1.2.3"}
+        status, response = self.request_json("POST", f"/tasks/{task_id}/actions/authorize", action_request)
         self.assertEqual(status, 423)
         self.assertEqual(response["error"], "ApprovalRequired")
-        self.request_json("POST", f"/tasks/{task_id}/approvals", {"action": "approve", "note": "Approved"})
-        status, response = self.request_json("POST", f"/tasks/{task_id}/actions/authorize", {"action_name": "deploy"})
+        approval = {
+            "action": "approve", "note": "Approved",
+            "action_name": "deploy", "target": "production/api", "scope": "release version 1.2.3",
+        }
+        self.request_json("POST", f"/tasks/{task_id}/approvals", approval)
+        status, response = self.request_json("POST", f"/tasks/{task_id}/actions/authorize", action_request)
         self.assertEqual(status, 200)
         self.assertTrue(response["authorized"])
         self.assertFalse(response["executed"])
