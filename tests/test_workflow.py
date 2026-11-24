@@ -191,6 +191,44 @@ class BridgeWorkflowTests(unittest.TestCase):
                 service = BridgeService("~/bridge-test.sqlite3")
                 self.assertEqual(service.database, str(Path(home) / "bridge-test.sqlite3"))
 
+    def test_core_rejects_non_boolean_approval_flag(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        with self.assertRaises(ValueError):
+            self.service.record_decision(
+                self.task_id, "A", "Bad flag", requires_approval="false"
+            )
+
+    def test_artifact_sha256_must_be_a_hex_digest(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        self.service.record_decision(self.task_id, "A", "Accepted")
+        with self.assertRaises(ValueError):
+            self.service.attach_artifact(
+                self.task_id, "commit", "https://example.invalid/commit/abc", "not-a-digest"
+            )
+
+    def test_legacy_approval_schema_is_migrated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "legacy.sqlite3"
+            with sqlite3.connect(database) as db:
+                db.execute(
+                    """CREATE TABLE approvals (
+                        approval_id TEXT PRIMARY KEY,
+                        decision_id TEXT NOT NULL,
+                        actor TEXT NOT NULL,
+                        action TEXT NOT NULL,
+                        note TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    )"""
+                )
+            BridgeService(database)
+            with sqlite3.connect(database) as db:
+                columns = {row[1] for row in db.execute("PRAGMA table_info(approvals)")}
+            self.assertTrue({"action_name", "target", "scope", "expires_at"}.issubset(columns))
+
     def test_export_redacts_other_authors_before_reveal(self):
         self.service.submit_position(self.task_id, "claude", "Private initial view A")
         self.service.submit_position(self.task_id, "gpt", "Private initial view B")
