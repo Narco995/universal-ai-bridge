@@ -6,7 +6,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from universal_ai_bridge import ApprovalRequired, BridgeService, Conflict, Forbidden, Unauthorized
+from universal_ai_bridge import (
+    ApprovalRequired,
+    BridgeService,
+    Conflict,
+    Forbidden,
+    Unauthorized,
+)
 
 
 class BridgeWorkflowTests(unittest.TestCase):
@@ -26,7 +32,7 @@ class BridgeWorkflowTests(unittest.TestCase):
 
     def test_sealed_positions_are_hidden_until_reveal(self):
         claude = self.service.submit_position(self.task_id, "claude", "Use append-only SQLite events")
-        gpt = self.service.submit_position(self.task_id, "gpt", "Use mutable JSON snapshots")
+        self.service.submit_position(self.task_id, "gpt", "Use mutable JSON snapshots")
         gpt_view = self.service.list_positions(self.task_id, viewer="gpt")
         self.assertEqual(len(gpt_view), 2)
         self.assertIn("content", next(p for p in gpt_view if p["author"] == "gpt"))
@@ -289,7 +295,7 @@ class BridgeWorkflowTests(unittest.TestCase):
         self.service.submit_position(self.task_id, "claude", "Option A")
         self.service.submit_position(self.task_id, "gpt", "Option B")
         self.service.reveal(self.task_id)
-        decision = self.service.record_decision(
+        self.service.record_decision(
             self.task_id, "A", "Requires decision acceptance", requires_approval=True
         )
         self.service.record_approval(
@@ -325,10 +331,9 @@ class BridgeWorkflowTests(unittest.TestCase):
             )
 
     def test_tilde_database_path_is_expanded(self):
-        with tempfile.TemporaryDirectory() as home:
-            with patch.dict(os.environ, {"HOME": home}):
-                service = BridgeService("~/bridge-test.sqlite3")
-                self.assertEqual(service.database, str(Path(home) / "bridge-test.sqlite3"))
+        with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, {"HOME": home}):
+            service = BridgeService("~/bridge-test.sqlite3")
+            self.assertEqual(service.database, str(Path(home) / "bridge-test.sqlite3"))
 
     def test_core_rejects_non_boolean_approval_flag(self):
         self.service.submit_position(self.task_id, "claude", "Option A")
@@ -391,9 +396,8 @@ class BridgeWorkflowTests(unittest.TestCase):
     def test_event_log_is_append_only(self):
         self.service.submit_position(self.task_id, "claude", "An independent view")
         import sqlite3
-        with sqlite3.connect(self.service.database) as db:
-            with self.assertRaises(sqlite3.IntegrityError):
-                db.execute("UPDATE events SET actor = 'tampered' WHERE event_id = 1")
+        with sqlite3.connect(self.service.database) as db, self.assertRaises(sqlite3.IntegrityError):
+            db.execute("UPDATE events SET actor = 'tampered' WHERE event_id = 1")
 
 
 if __name__ == "__main__":
