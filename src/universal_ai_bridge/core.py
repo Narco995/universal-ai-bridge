@@ -321,3 +321,83 @@ class BridgeService:
     def list_positions(self, task_id: str, viewer: str) -> list[dict[str, Any]]:
         with self._connection() as db:
             task = self._task_row(db, task_id)
+            revealed = task["status"] in self.TERMINAL_VISIBLE_STATES
+            rows = db.execute("SELECT * FROM positions WHERE task_id = ? ORDER BY submitted_at, position_id", (task_id,)).fetchall()
+            visible = []
+            for row in rows:
+                may_read = task["mode"] == "open" or revealed or row["author"] == viewer
+                visible.append(self._position_dict(row, include_content=may_read))
+            return visible
+
+    def close_collection(self, task_id: str, actor: str = "human", note: str = "manual close") -> dict[str, Any]:
+        with self._transaction() as db:
+            task = self._task_row(db, task_id)
+            if task["status"] != "collecting":
+                raise Conflict(f"cannot close collection while task is {task['status']}")
+            count = db.execute("SELECT COUNT(*) FROM positions WHERE task_id = ?", (task_id,)).fetchone()[0]
+            if count == 0:
+                raise Conflict("cannot close an empty collection")
+            now = _now()
+            db.execute("UPDATE tasks SET status = 'ready_to_reveal', updated_at = ? WHERE task_id = ?", (now, task_id))
+            self._append_event(db, "collection_closed", task_id, actor, {"note": note, "position_count": count})
+            return self._task_dict(self._task_row(db, task_id))
+
+    def reveal(self, task_id: str, actor: str = "human") -> dict[str, Any]:
+        with self._transaction() as db:
+            task = self._task_row(db, task_id)
+            if task["status"] != "ready_to_reveal":
+                raise Conflict("collection must be complete or manually closed before reveal")
+            now = _now()
+            db.execute("UPDATE tasks SET status = 'revealed', revealed_at = ?, updated_at = ? WHERE task_id = ?", (now, now, task_id))
+            self._append_event(db, "positions_revealed", task_id, actor, {"position_count": db.execute("SELECT COUNT(*) FROM positions WHERE task_id = ?", (task_id,)).fetchone()[0]})
+            return self._task_dict(self._task_row(db, task_id))
+
+    def record_decision(
+        self,
+        task_id: str,
+        choice: str,
+        rationale: str,
+        supporting_position_ids: list[str] | None = None,
+        considered_not_chosen_position_ids: list[str] | None = None,
+        requires_approval: bool = False,
+        actor: str = "human",
+    ) -> dict[str, Any]:
+        choice, rationale = choice.strip(), rationale.strip()
+        if not choice or not rationale:
+            raise ValueError("choice and rationale are required")
+        supporting = list(dict.fromkeys(self._string_list(supporting_position_ids, "supporting_position_ids")))
+        dissent = list(dict.fromkeys(self._string_list(considered_not_chosen_position_ids, "considered_not_chosen_position_ids")))
+        if set(supporting) & set(dissent):
+            raise ValueError("a position cannot be both supporting and considered-not-chosen")
+        decision_id, now = _id("dec"), _now()
+        with self._transaction() as db:
+            task = self._task_row(db, task_id)
+            if task["status"] not in {"revealed", "changes_requested"}:
+                raise Conflict(f"a decision cannot be recorded while task is {task['status']}")
+            linked = set(supporting + dissent)
+            if linked:
+                placeholders = ",".join("?" for _ in linked)
+                found = db.execute(
+                    f"SELECT position_id FROM positions WHERE task_id = ? AND position_id IN ({placeholders})",
+                    [task_id, *linked],
+                ).fetchall()
+                if {r[0] for r in found} != linked:
+                    raise ValueError("every linked position must belong to this task")
+            status = "awaiting_approval" if requires_approval else "decided"
+            db.execute(
+                """INSERT INTO decisions(decision_id, task_id, choice, rationale, supporting_position_ids_json,
+                   considered_not_chosen_ids_json, requires_approval, status, supersedes_decision_id, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (decision_id, task_id, choice, rationale, _json(supporting), _json(dissent), int(requires_approval), status,
+                 task["current_decision_id"], now),
+            )
+            db.execute(
+                "UPDATE tasks SET status = ?, current_decision_id = ?, updated_at = ? WHERE task_id = ?",
+                (status, decision_id, now, task_id),
+            )
+            self._append_event(db, "decision_recorded", task_id, actor, {
+                "decision_id": decision_id,
+                "choice": choice,
+                "rationale": rationale,
+                "supporting_position_ids": supporting,
+                "considered_not_chosen_position_ids": dissent,
