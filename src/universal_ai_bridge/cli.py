@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from .core import BridgeService, BridgeError
+from .core import BridgeError, BridgeService
 from .http_api import serve
 
 
