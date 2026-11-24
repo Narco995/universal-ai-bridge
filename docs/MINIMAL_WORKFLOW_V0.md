@@ -6,14 +6,14 @@ Prove the smallest useful collaboration workflow before introducing MCP adapters
 
 ## State model
 
-\`collecting\` → \`ready_to_reveal\` → \`revealed\` → \`decided\` or \`awaiting_approval\` → \`approved\` / \`rejected\` / \`changes_requested\` → \`implemented\`.
+`collecting` → `ready_to_reveal` → `revealed` → `decided` or `awaiting_approval` → `approved` / `rejected` / `changes_requested` → `implemented`.
 
-A task becomes \`ready_to_reveal\` automatically when every required author has submitted, or when the human explicitly closes a non-empty collection. \`reveal\` is rejected until that condition is met. A task in \`changes_requested\` may receive a superseding decision; earlier decisions remain in the record.
+A task becomes `ready_to_reveal` automatically when every required author has submitted, or when the human explicitly closes a non-empty collection. `reveal` is rejected until that condition is met. A task in `changes_requested` may receive a superseding decision; earlier decisions remain in the record.
 
 ## Data model
 
 - **Task:** objective, acceptance criteria, mode, required author labels, state, current decision.
-- **Position:** author label, body, content hash, timestamp, and \`submission_method=manual\`.
+- **Position:** author label, body, content hash, timestamp, and `submission_method=manual`.
 - **Decision:** chosen option, rationale, supporting position IDs, considered-not-chosen position IDs, approval requirement, status, and superseded decision link.
 - **Approval:** human actor, approve/reject/request-changes action, note, timestamp.
 - **Artifact:** kind, URI, optional SHA-256, timestamp.
@@ -21,11 +21,11 @@ A task becomes \`ready_to_reveal\` automatically when every required author has 
 
 ## Independence and provenance
 
-In independent mode, a caller sees its own position body while collection is sealed; other authors' bodies become visible after reveal. In open mode, bodies are visible immediately. The HTTP server is loopback-only in v0. The \`X-Bridge-Actor\` header is a caller-supplied label, not authenticated identity; this filtering is a workflow demonstration, not a security boundary against an untrusted caller. Database-file access also bypasses application filtering. Independent analysis still depends on the human operator using separate model sessions and not cross-sharing drafts before submission. All submissions are explicitly recorded as manual; no live provider connection is claimed.
+In independent mode, a caller sees its own position body while collection is sealed; other authors' bodies become visible after reveal. In open mode, bodies are visible immediately. The HTTP server is loopback-only in v0. The `X-Bridge-Actor` header is a caller-supplied label, not authenticated identity; this filtering is a workflow demonstration, not a security boundary against an untrusted caller. Database-file access also bypasses application filtering. Independent analysis still depends on the human operator using separate model sessions and not cross-sharing drafts before submission. All submissions are explicitly recorded as manual; no live provider connection is claimed.
 
 ## Approval semantics
 
-A decision marked \`requires_approval=true\` enters \`awaiting_approval\`. Only the \`human\` principal can record approval. The authorization check and artifact attachment reject the action until the current decision is approved. The v0 authorization endpoint records that the check passed but does not execute the requested action. A future tool executor must call the same guard immediately before a side effect, using authenticated identity, capability policy, idempotency, and an audit trail.
+A decision marked `requires_approval=true` enters `awaiting_approval`. Only the `human` principal can record approval. The authorization check and artifact attachment reject the action until the current decision is approved. The v0 authorization endpoint records that the check passed but does not execute the requested action. A future tool executor must call the same guard immediately before a side effect, using authenticated identity, capability policy, idempotency, and an audit trail.
 
 ## Events and reproducibility
 
