@@ -36,6 +36,9 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _body(self) -> dict:
+        media_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if media_type != "application/json":
+            raise ValueError("Content-Type must be application/json")
         raw_length = self.headers.get("Content-Length", "0")
         try:
             length = int(raw_length)
