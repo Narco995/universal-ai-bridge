@@ -241,3 +241,83 @@ class BridgeService:
     ) -> dict[str, Any]:
         objective = objective.strip()
         criteria_input = self._string_list(acceptance_criteria, "acceptance_criteria")
+        authors_input = self._string_list(required_authors, "required_authors")
+        criteria = [item.strip() for item in criteria_input if item.strip()]
+        authors = list(dict.fromkeys(a.strip() for a in authors_input if a.strip()))
+        if not objective:
+            raise ValueError("objective is required")
+        if not criteria:
+            raise ValueError("at least one acceptance criterion is required")
+        if mode not in {"independent", "open"}:
+            raise ValueError("mode must be 'independent' or 'open'")
+        task_id, now = _id("task"), _now()
+        with self._transaction() as db:
+            db.execute(
+                """INSERT INTO tasks(task_id, objective, acceptance_criteria_json, mode, required_authors_json,
+                   status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'collecting', ?, ?)""",
+                (task_id, objective, _json(criteria), mode, _json(authors), now, now),
+            )
+            self._append_event(db, "task_created", task_id, actor, {
+                "objective": objective,
+                "acceptance_criteria": criteria,
+                "mode": mode,
+                "required_authors": authors,
+                "submission_policy": "manual_until_provider_adapters_exist",
+            })
+            row = self._task_row(db, task_id)
+            return self._task_dict(row)
+
+    def get_task(self, task_id: str) -> dict[str, Any]:
+        with self._connection() as db:
+            return self._task_dict(self._task_row(db, task_id))
+
+    def submit_position(self, task_id: str, author: str, content: str, actor: str = "human") -> dict[str, Any]:
+        author, content = author.strip(), content.strip()
+        if not author or not content:
+            raise ValueError("author and content are required")
+        position_id, now = _id("pos"), _now()
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        with self._transaction() as db:
+            task = self._task_row(db, task_id)
+            if task["status"] != "collecting":
+                raise Conflict(f"positions cannot be submitted while task is {task['status']}")
+            try:
+                db.execute(
+                    """INSERT INTO positions(position_id, task_id, author, content, content_hash, submitted_at,
+                       submission_method) VALUES (?, ?, ?, ?, ?, ?, 'manual')""",
+                    (position_id, task_id, author, content, content_hash, now),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise Conflict(f"{author} has already submitted a position for this task") from exc
+            self._append_event(db, "position_submitted", task_id, actor, {
+                "position_id": position_id,
+                "author": author,
+                "content": content,
+                "content_hash": content_hash,
+                "submission_method": "manual",
+            })
+            required = set(json.loads(task["required_authors_json"]))
+            submitted = {r[0] for r in db.execute("SELECT author FROM positions WHERE task_id = ?", (task_id,)).fetchall()}
+            if required and required.issubset(submitted):
+                db.execute("UPDATE tasks SET status = 'ready_to_reveal', updated_at = ? WHERE task_id = ?", (now, task_id))
+                self._append_event(db, "collection_ready", task_id, actor, {"reason": "all_required_authors_submitted"})
+            row = db.execute("SELECT * FROM positions WHERE position_id = ?", (position_id,)).fetchone()
+            return self._position_dict(row, include_content=True)
+
+    @staticmethod
+    def _position_dict(row: sqlite3.Row, include_content: bool) -> dict[str, Any]:
+        result = {
+            "position_id": row["position_id"],
+            "task_id": row["task_id"],
+            "author": row["author"],
+            "content_hash": row["content_hash"],
+            "submitted_at": row["submitted_at"],
+            "submission_method": row["submission_method"],
+        }
+        if include_content:
+            result["content"] = row["content"]
+        return result
+
+    def list_positions(self, task_id: str, viewer: str) -> list[dict[str, Any]]:
+        with self._connection() as db:
+            task = self._task_row(db, task_id)
