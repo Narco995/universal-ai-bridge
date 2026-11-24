@@ -49,11 +49,25 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
             raise ValueError("JSON request body must be an object")
         return parsed
 
-    def _actor(self) -> str:
-        return (self.headers.get("X-Bridge-Actor") or "human").strip() or "human"
+    def _principal(self, task_id: str) -> dict[str, str]:
+        authorization = self.headers.get("Authorization", "")
+        scheme, separator, token = authorization.partition(" ")
+        if not separator or scheme.lower() != "bearer" or not token.strip():
+            from .core import Unauthorized
+            raise Unauthorized("send a task-scoped bearer token in the Authorization header")
+        return self.server.service.authenticate_principal(task_id, token.strip())
+
+    def _owner(self, task_id: str) -> dict[str, str]:
+        principal = self._principal(task_id)
+        if principal["role"] != "owner":
+            raise Forbidden("this operation requires the task owner credential")
+        return principal
 
     def _error(self, exc: Exception) -> None:
-        if isinstance(exc, NotFound):
+        from .core import Unauthorized
+        if isinstance(exc, Unauthorized):
+            status = 401
+        elif isinstance(exc, NotFound):
             status = 404
         elif isinstance(exc, Forbidden):
             status = 403
@@ -67,12 +81,7 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
             status = 409
         else:
             status = 500
-        if status >= 500:
-            self.log_error("Unhandled Bridge request error: %s", type(exc).__name__)
-            message = "internal server error"
-        else:
-            message = str(exc)
-        self._send(status, {"error": type(exc).__name__, "message": message})
+        self._send(status, {"error": type(exc).__name__, "message": str(exc)})
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -83,17 +92,19 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
                 return
             if len(parts) >= 2 and parts[0] == "tasks":
                 task_id = parts[1]
+                principal = self._principal(task_id)
+                viewer = principal["name"] if principal["role"] == "participant" else "__task_owner__"
                 if len(parts) == 2:
                     self._send(200, self.server.service.get_task(task_id))
                     return
                 if len(parts) == 3 and parts[2] == "positions":
-                    self._send(200, {"positions": self.server.service.list_positions(task_id, self._actor())})
+                    self._send(200, {"positions": self.server.service.list_positions(task_id, viewer)})
                     return
                 if len(parts) == 3 and parts[2] == "export":
-                    self._send(200, self.server.service.export_timeline(task_id, viewer=self._actor()))
+                    self._send(200, self.server.service.export_timeline(task_id, viewer=viewer))
                     return
             self._send(404, {"error": "NotFound", "message": "route not found"})
-        except Exception as exc:  # Expected domain/input errors are normalized here.
+        except Exception as exc:
             self._error(exc)
 
     def do_POST(self) -> None:  # noqa: N802
@@ -101,21 +112,28 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
         parts = [unquote(p) for p in parsed.path.strip("/").split("/") if p]
         try:
             body = self._body()
-            actor = self._actor()
             service = self.server.service
             if parts == ["tasks"]:
                 result = service.create_task(
                     body.get("objective", ""), body.get("acceptance_criteria", []),
-                    body.get("mode", "independent"), body.get("required_authors", []), actor=actor,
+                    body.get("mode", "independent"), body.get("required_authors", []),
                 )
                 self._send(201, result)
                 return
             if len(parts) >= 2 and parts[0] == "tasks":
                 task_id = parts[1]
                 if len(parts) == 3 and parts[2] == "positions":
-                    result = service.submit_position(task_id, body.get("author", ""), body.get("content", ""), actor=actor)
+                    principal = self._principal(task_id)
+                    if principal["role"] != "participant":
+                        raise Forbidden("only a participant credential may submit a position")
+                    if "author" in body:
+                        raise ValueError("author is derived from the bearer credential and must not be supplied")
+                    result = service.submit_position(task_id, principal["name"], body.get("content", ""), actor=principal["name"])
                     self._send(201, result)
                     return
+
+                principal = self._owner(task_id)
+                actor = principal["name"]
                 if len(parts) == 3 and parts[2] == "close":
                     self._send(200, service.close_collection(task_id, actor=actor, note=body.get("note", "manual close")))
                     return
@@ -134,13 +152,22 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
                     self._send(201, result)
                     return
                 if len(parts) == 3 and parts[2] == "approvals":
-                    self._send(201, service.record_approval(task_id, body.get("action", ""), body.get("note", ""), actor=actor, action_name=body.get("action_name", ""), target=body.get("target", ""), scope=body.get("scope", ""), expires_at=body.get("expires_at")))
+                    self._send(201, service.record_approval(
+                        task_id, body.get("action", ""), body.get("note", ""), actor=actor,
+                        action_name=body.get("action_name", ""), target=body.get("target", ""),
+                        scope=body.get("scope", ""), expires_at=body.get("expires_at"),
+                    ))
                     return
                 if len(parts) == 4 and parts[2:] == ["actions", "authorize"]:
-                    self._send(200, service.authorize_action(task_id, body.get("action_name", ""), actor=actor, target=body.get("target", ""), scope=body.get("scope", "")))
+                    self._send(200, service.authorize_action(
+                        task_id, body.get("action_name", ""), actor=actor,
+                        target=body.get("target", ""), scope=body.get("scope", ""),
+                    ))
                     return
                 if len(parts) == 3 and parts[2] == "artifacts":
-                    self._send(201, service.attach_artifact(task_id, body.get("kind", ""), body.get("uri", ""), body.get("sha256"), actor=actor))
+                    self._send(201, service.attach_artifact(
+                        task_id, body.get("kind", ""), body.get("uri", ""), body.get("sha256"), actor=actor,
+                    ))
                     return
             self._send(404, {"error": "NotFound", "message": "route not found"})
         except Exception as exc:
