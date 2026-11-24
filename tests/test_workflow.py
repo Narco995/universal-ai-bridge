@@ -228,6 +228,31 @@ class BridgeWorkflowTests(unittest.TestCase):
         self.assertNotIn(participant, exported)
         self.assertNotIn(credentials["owner_token"], exported)
 
+    def test_expired_decision_acceptance_blocks_action_even_when_action_approval_is_live(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        decision = self.service.record_decision(
+            self.task_id, "A", "Decision requires separate acceptance", requires_approval=True
+        )
+        decision_approval = self.service.record_approval(
+            self.task_id, "approve", "Accepted this decision",
+            action_name="decision_acceptance", target=self.task_id, scope=decision["decision_id"],
+        )
+        self.service.record_approval(
+            self.task_id, "approve", "Approved exact action",
+            action_name="deploy", target="production", scope="release 2.0",
+        )
+        with sqlite3.connect(self.service.database) as db:
+            db.execute(
+                "UPDATE approvals SET expires_at = ? WHERE approval_id = ?",
+                ("2000-01-01T00:00:00.000000+00:00", decision_approval["approval_id"]),
+            )
+        with self.assertRaises(ApprovalRequired):
+            self.service.authorize_action(
+                self.task_id, "deploy", target="production", scope="release 2.0"
+            )
+
     def test_expired_decision_approval_cannot_attach_artifact(self):
         self.service.submit_position(self.task_id, "claude", "Option A")
         self.service.submit_position(self.task_id, "gpt", "Option B")
