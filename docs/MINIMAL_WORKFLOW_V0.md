@@ -56,4 +56,4 @@ This detects ordinary event or projection tampering, but is not cryptographic no
 
 ## Explicit non-goals
 
-No MCP adapter, provider APIs, cryptographic position sealing, identity-provider integration, TLS, encryption-at-rest, token rotation/revocation, multi-tenant remote deployment, automatic conflict summarizer, real tool execution, UI, ranking/scoring, or production security claim.
+No remote MCP transport, provider APIs, cryptographic position sealing, identity-provider integration, TLS, encryption-at-rest, token rotation/revocation, multi-tenant remote deployment, automatic conflict summarizer, real tool execution, UI, ranking/scoring, or production security claim.
