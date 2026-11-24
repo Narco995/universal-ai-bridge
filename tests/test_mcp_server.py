@@ -81,8 +81,8 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                     all("content" not in position for position in owner_view.structured_content["positions"])
                 )
 
-                with self.assertRaises(UnexpectedToolError):
-                    await gpt.call_tool("positions_reveal", {"task_id": task_id})
+                denied_reveal = await gpt.call_tool("positions_reveal", {"task_id": task_id})
+                self.assertTrue(denied_reveal.is_error)
 
                 reveal = await owner.call_tool("positions_reveal", {"task_id": task_id})
                 self.assertFalse(reveal.is_error)
