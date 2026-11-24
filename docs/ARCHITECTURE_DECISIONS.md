@@ -6,7 +6,7 @@
 
 **Rationale:** Avoid divergent behavior and duplicated policy enforcement.
 
-**Consequence:** Workflow state, authorization, and domain logic belong in the shared core. The v0 CLI and HTTP API already share `BridgeService`; MCP is deferred until core invariants pass tests.
+**Consequence:** Workflow state, authorization, and domain logic belong in the shared core. The v0 CLI, HTTP API, and local MCP stdio adapter all share `BridgeService`. Remote MCP transport and provider integrations remain deferred.
 
 ## ADR-002: Peer collaboration, dynamic task leadership
 
@@ -47,9 +47,18 @@
 1. Minimal shared core, persistence, and workflow invariants (v0: SQLite, CLI, and loopback HTTP API).
 2. Validate sealed positions, dissent preservation, export reproducibility, and approval enforcement with automated tests.
 3. Add authenticated participant identity and stronger approval/tool capability boundaries.
-4. Add MCP adapter over the same core; preserve REST as a thin adapter.
-5. Add provider adapters and actual multi-agent orchestration only after provider identity, state, and failure semantics are defined.
-6. Expand integration, evaluation, recovery, observability, and operational hardening.
+4. Add provider adapters and actual multi-agent orchestration only after provider identity, state, and failure semantics are defined.
+5. Implement the standard Claude directive → GPT execution → Claude critique → GPT revision cycle, with Grok as an equal peer and specialist routing by task.
+6. Persist Auto and Manual execution modes separately from independent/open collaboration mode; Auto may perform only reversible, low-risk in-scope work, while protected actions retain human approval gates.
+7. Expand integration, evaluation, recovery, observability, and operational hardening.
+
+## ADR-008: Standard build protocol and execution modes
+
+**Decision:** Preserve the standard Claude directive → GPT execution → Claude independent critique → GPT revision cycle as the default build workflow. The first critique always triggers a revision or evidence-backed reassessment, with a maximum of five review rounds. Grok remains an equal peer and may contribute or lead according to task fit. Keep Auto and Manual execution modes as a separate dimension from independent/open position-collection mode.
+
+**Rationale:** Retain the user's proven review discipline without turning workflow responsibilities into permanent model hierarchy. Keep independence, execution autonomy, and human approval as distinct controls.
+
+**Consequence:** The v0.1 workflow currently implements independent/open collection and approval records; the automated critique/revision orchestrator and runtime Auto/Manual execution policies remain future work.
 
 ## Deferred
 
