@@ -161,3 +161,83 @@ class BridgeService:
                 """
             )
 
+                """
+            )
+
+    def _append_event(
+        self,
+        db: sqlite3.Connection,
+        event_type: str,
+        task_id: str,
+        actor: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        previous = db.execute("SELECT event_hash FROM events ORDER BY event_id DESC LIMIT 1").fetchone()
+        previous_hash = previous["event_hash"] if previous else "0" * 64
+        occurred_at = _now()
+        payload_json = _json(payload)
+        canonical = _json({
+            "event_type": event_type,
+            "task_id": task_id,
+            "actor": actor,
+            "payload_json": payload_json,
+            "occurred_at": occurred_at,
+            "previous_hash": previous_hash,
+        })
+        event_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        cursor = db.execute(
+            """INSERT INTO events(event_type, task_id, actor, payload_json, occurred_at, previous_hash, event_hash)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (event_type, task_id, actor, payload_json, occurred_at, previous_hash, event_hash),
+        )
+        return {
+            "event_id": cursor.lastrowid,
+            "event_type": event_type,
+            "task_id": task_id,
+            "actor": actor,
+            "payload": payload,
+            "occurred_at": occurred_at,
+            "previous_hash": previous_hash,
+            "event_hash": event_hash,
+        }
+
+    @staticmethod
+    def _string_list(value: Any, field_name: str) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise ValueError(f"{field_name} must be a list of strings")
+        return value
+
+    @staticmethod
+    def _task_row(db: sqlite3.Connection, task_id: str) -> sqlite3.Row:
+        row = db.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+        if row is None:
+            raise NotFound(f"Task not found: {task_id}")
+        return row
+
+    @staticmethod
+    def _task_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "task_id": row["task_id"],
+            "objective": row["objective"],
+            "acceptance_criteria": json.loads(row["acceptance_criteria_json"]),
+            "mode": row["mode"],
+            "required_authors": json.loads(row["required_authors_json"]),
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "revealed_at": row["revealed_at"],
+            "current_decision_id": row["current_decision_id"],
+        }
+
+    def create_task(
+        self,
+        objective: str,
+        acceptance_criteria: list[str],
+        mode: str = "independent",
+        required_authors: list[str] | None = None,
+        actor: str = "human",
+    ) -> dict[str, Any]:
+        objective = objective.strip()
+        criteria_input = self._string_list(acceptance_criteria, "acceptance_criteria")
