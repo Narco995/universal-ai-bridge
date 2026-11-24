@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from universal_ai_bridge import ApprovalRequired, BridgeService, Conflict, Forbidden, Unauthorized
+from universal_ai_bridge import ApprovalRequired, BridgeService, Conflict, Forbidden, Unauthorized, Unauthorized
 
 
 class BridgeWorkflowTests(unittest.TestCase):
@@ -58,14 +58,18 @@ class BridgeWorkflowTests(unittest.TestCase):
         p1 = self.service.submit_position(self.task_id, "claude", "Proposal A")
         self.service.submit_position(self.task_id, "gpt", "Proposal B")
         self.service.reveal(self.task_id)
-        self.service.record_decision(self.task_id, "A", "A meets the criteria", [p1["position_id"]], [], True)
+        decision = self.service.record_decision(self.task_id, "A", "A meets the criteria", [p1["position_id"]], [], True)
         action = "modify_shared_infrastructure"
         target = "repository/main"
         scope = "change collaboration workflow"
         with self.assertRaises(ApprovalRequired):
             self.service.authorize_action(self.task_id, action, target=target, scope=scope)
         self.service.record_approval(
-            self.task_id, "approve", "Reviewed and approved",
+            self.task_id, "approve", "Approved the decision",
+            action_name="decision_acceptance", target=self.task_id, scope=decision["decision_id"],
+        )
+        self.service.record_approval(
+            self.task_id, "approve", "Approved the exact implementation action",
             action_name=action, target=target, scope=scope,
         )
         self.service.authorize_action(self.task_id, action, target=target, scope=scope)
@@ -96,10 +100,14 @@ class BridgeWorkflowTests(unittest.TestCase):
         with self.assertRaises(Forbidden):
             self.service.record_approval(
                 self.task_id, "approve", "not the principal", actor="gpt",
-                action_name=action, target=target, scope=scope,
+                action_name="decision_acceptance", target=self.task_id, scope=decision["decision_id"],
             )
         self.service.record_approval(
-            self.task_id, "approve", "Human principal reviewed scope and evidence", actor="human",
+            self.task_id, "approve", "Human principal accepted the decision", actor="human",
+            action_name="decision_acceptance", target=self.task_id, scope=decision["decision_id"],
+        )
+        self.service.record_approval(
+            self.task_id, "approve", "Human principal approved the exact action", actor="human",
             action_name=action, target=target, scope=scope,
         )
         result = self.service.authorize_action(self.task_id, action, target=target, scope=scope)
@@ -194,6 +202,15 @@ class BridgeWorkflowTests(unittest.TestCase):
         self.assertFalse(integrity["valid"])
         self.assertEqual(integrity["reason"], "decision_state_projection_mismatch")
 
+    def test_open_task_can_issue_participant_credentials_after_creation(self):
+        task = self.service.create_task("Open collaboration", ["Allow dynamic contributors"], mode="open")
+        issued = self.service.issue_participant(task["task_id"], "grok")
+        principal = self.service.authenticate_principal(task["task_id"], issued["token"])
+        self.assertEqual(principal["name"], "grok")
+        self.assertEqual(principal["role"], "participant")
+        with self.assertRaises(Conflict):
+            self.service.issue_participant(task["task_id"], "grok")
+
     def test_task_principal_credentials_are_task_scoped_and_secrets_are_not_logged(self):
         credentials = self.task["credentials"]
         participant = credentials["participant_tokens"]["claude"]
@@ -215,10 +232,10 @@ class BridgeWorkflowTests(unittest.TestCase):
         self.service.submit_position(self.task_id, "claude", "Option A")
         self.service.submit_position(self.task_id, "gpt", "Option B")
         self.service.reveal(self.task_id)
-        self.service.record_decision(self.task_id, "A", "Decision requires approval", requires_approval=True)
+        decision = self.service.record_decision(self.task_id, "A", "Decision requires approval", requires_approval=True)
         approval = self.service.record_approval(
             self.task_id, "approve", "Short-lived decision approval",
-            action_name="deploy", target="staging", scope="release 1.0",
+            action_name="decision_acceptance", target=self.task_id, scope=decision["decision_id"],
         )
         with sqlite3.connect(self.service.database) as db:
             db.execute(
