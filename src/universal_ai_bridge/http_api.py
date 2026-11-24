@@ -64,7 +64,12 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
             status = 409
         else:
             status = 500
-        self._send(status, {"error": type(exc).__name__, "message": str(exc)})
+        if status >= 500:
+            self.log_error("Unhandled Bridge request error: %s", type(exc).__name__)
+            message = "internal server error"
+        else:
+            message = str(exc)
+        self._send(status, {"error": type(exc).__name__, "message": message})
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
