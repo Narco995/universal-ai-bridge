@@ -7,10 +7,11 @@ name = "universal-ai-bridge"
 version = "0.1.0"
 description = "Minimal auditable collaboration workflow for Universal AI Bridge"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["mcp>=2.3,<3"]
 
 [project.scripts]
 uab = "universal_ai_bridge.cli:main"
+uab-mcp = "universal_ai_bridge.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
