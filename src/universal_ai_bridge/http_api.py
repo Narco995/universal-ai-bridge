@@ -189,7 +189,7 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
                     ))
                     return
             self._send(404, {"error": "NotFound", "message": "route not found"})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - transport boundary sanitizes all uncaught failures
             self._error(exc)
 
 
