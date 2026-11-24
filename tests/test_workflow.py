@@ -158,6 +158,20 @@ class BridgeWorkflowTests(unittest.TestCase):
             self.service.authorize_action(
                 self.task_id, "deploy", target="staging", scope="release 1.0"
             )
+        integrity = self.service.verify_event_chain()
+        self.assertFalse(integrity["valid"])
+        self.assertEqual(integrity["reason"], "projection_mismatch")
+
+    def test_projection_tampering_is_detected(self):
+        self.service.submit_position(self.task_id, "claude", "Original position")
+        with sqlite3.connect(self.service.database) as db:
+            db.execute(
+                "UPDATE positions SET content = ? WHERE task_id = ?",
+                ("tampered position", self.task_id),
+            )
+        integrity = self.service.verify_event_chain()
+        self.assertFalse(integrity["valid"])
+        self.assertEqual(integrity["reason"], "projection_mismatch")
 
     def test_expired_approval_cannot_be_created(self):
         self.service.submit_position(self.task_id, "claude", "Option A")
