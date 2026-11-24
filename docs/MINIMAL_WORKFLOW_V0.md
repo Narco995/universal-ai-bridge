@@ -34,11 +34,11 @@ Independent analysis still depends on the human distributing participant tokens 
 
 ## Approval semantics
 
-A decision marked `requires_approval=true` enters `awaiting_approval`. A matching owner approval moves the decision to `approved`. Approval records are bound to an exact action name, target, and scope and expire after 15 minutes by default (or at a supplied timezone-aware ISO-8601 expiry).
+A decision marked `requires_approval=true` enters `awaiting_approval`. It requires a separate approval with `action_name=decision_acceptance`, `target=task_id`, and `scope=decision_id`; only this exact approval moves the decision to `approved`. Approval records are bound to an exact action name, target, and scope and expire after 15 minutes by default (or at a supplied timezone-aware ISO-8601 expiry).
 
-Every call to `authorize_action` requires a matching, unexpired approval regardless of the caller-selected action name. There is no caller-controlled low-risk action-name allowlist. Read-only GET routes do not call `authorize_action`. This avoids treating an arbitrary label such as `export` as proof that the underlying operation is harmless.
+Every call to `authorize_action` requires a separate matching, unexpired approval for the exact side effect, regardless of the caller-selected action name. The decision-acceptance approval alone cannot authorize a deployment or other side effect. There is no caller-controlled low-risk action-name allowlist. Read-only GET routes do not call `authorize_action`.
 
-A decision that requires approval also requires a valid, unexpired approval before artifact attachment. The authorization endpoint records that a check passed; it does not execute a side effect. A future executor must use canonical tool identifiers and a capability registry, and must call the authorization guard immediately before the actual side effect.
+A decision that requires approval also requires its valid, unexpired `decision_acceptance` approval before artifact attachment. The authorization endpoint records that a check passed; it does not execute a side effect. A future executor must use canonical tool identifiers and a capability registry, and must call the authorization guard immediately before the actual side effect.
 
 ## Events and reproducibility
 
