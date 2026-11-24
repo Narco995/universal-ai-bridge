@@ -62,7 +62,7 @@ Every task identifies one accountable owner, contributors, reviewers, and permit
 
 The Bridge enforces permissions and approvals at the tool boundary. Requiring approval is determined by action class, scope, target, and blast radius—not by which agent proposes the action. Financial operations, external communications, destructive operations, privilege expansion, production-impacting changes, and sensitive-data handling require explicit human approval. Silence and agent consensus are not approval.
 
-**Auto** and **Manual** are execution modes, separate from **independent** and **open** position-collection modes. Auto may proceed only with reversible, low-risk work inside approved scope; protected actions always retain explicit human approval. Manual pauses at configured human checkpoints. v0.1 currently implements independent/open collection and approval records; the runtime Auto/Manual orchestrator is a planned milestone, not an existing feature.
+**Auto** and **Manual** are execution modes, separate from **independent** and **open** position-collection modes. Auto may proceed only with reversible, low-risk work inside approved scope; protected actions always retain explicit human approval. Manual pauses at configured human checkpoints. v0.1 persists independent/open collection mode, Auto/Manual execution-mode preference, and approval records; automatic execution and the runtime Auto/Manual orchestrator remain planned milestones.
 
 ## 9. Evidence and provenance
 
