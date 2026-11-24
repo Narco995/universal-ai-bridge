@@ -103,18 +103,17 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                     "UAB_LOG_LEVEL": "ERROR",
                 },
             )
-            async with stdio_client(parameters) as transport:
-                async with Client(transport) as client:
-                    result = await client.call_tool("task_get", {"task_id": task["task_id"]})
-                    self.assertFalse(result.is_error)
-                    self.assertEqual(result.structured_content["task_id"], task["task_id"])
+            async with Client(stdio_client(parameters)) as client:
+                result = await client.call_tool("task_get", {"task_id": task["task_id"]})
+                self.assertFalse(result.is_error)
+                self.assertEqual(result.structured_content["task_id"], task["task_id"])
 
-                    submitted = await client.call_tool(
-                        "position_submit",
-                        {"task_id": task["task_id"], "content": "Position delivered through stdio"},
-                    )
-                    self.assertFalse(submitted.is_error)
-                    self.assertEqual(submitted.structured_content["author"], "claude")
+                submitted = await client.call_tool(
+                    "position_submit",
+                    {"task_id": task["task_id"], "content": "Position delivered through stdio"},
+                )
+                self.assertFalse(submitted.is_error)
+                self.assertEqual(submitted.structured_content["author"], "claude")
 
             self.assertEqual(
                 service.list_positions(task["task_id"], viewer="claude")[0]["content"],
