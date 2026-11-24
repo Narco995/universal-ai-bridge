@@ -14,7 +14,6 @@ from mcp.server.mcpserver.exceptions import ToolError
 from .core import BridgeError, BridgeService, Forbidden
 
 
-
 def _tool_error_boundary(function):
     """Return expected Bridge/policy failures to the model as readable MCP tool errors."""
     @wraps(function)
