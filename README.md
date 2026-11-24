@@ -58,8 +58,13 @@ uab --db ./bridge.sqlite3 decision record TASK_ID \\
   --considered-not-chosen OTHER_POSITION_ID \\
   --requires-approval
 
-uab --db ./bridge.sqlite3 approval TASK_ID --action approve --note "Reviewed by the human principal"
-uab --db ./bridge.sqlite3 action TASK_ID --name "modify_shared_infrastructure"
+uab --db ./bridge.sqlite3 approval TASK_ID --action approve \\\
+  --action-name "modify_shared_infrastructure" \\\
+  --target "repository/main" \\\
+  --scope "change collaboration workflow" \\\
+  --note "Reviewed by the human principal"
+uab --db ./bridge.sqlite3 action TASK_ID --name "modify_shared_infrastructure" \\\
+  --target "repository/main" --scope "change collaboration workflow"
 uab --db ./bridge.sqlite3 export TASK_ID --format markdown --output task-TASK_ID.md
 uab --db ./bridge.sqlite3 verify events
 ```
@@ -87,7 +92,7 @@ There is no user authentication, TLS, encryption-at-rest, cryptographic particip
 - Dissent is stored as position IDs explicitly linked under `considered_not_chosen_position_ids` in a decision.
 - Timeline export includes task, positions, decisions, approvals, artifacts, and task events.
 - Events are append-only at the SQLite layer and form a SHA-256 hash chain; `verify events` checks the chain for record alteration. This is not a signed or tamper-proof audit system against an administrator who can replace the database.
-- Decisions marked `requires_approval` cannot pass the authorization check or accept an implementation artifact until the human principal approval action is recorded. Identity of that approver is not authenticated in v0.
+- The action authorization policy is conservative: only the explicit low-risk names `read`, `list`, `inspect`, `export`, `status`, and `analyze` are allowlisted without approval. Unknown and consequential action names require approval even if a decision's `requires_approval` flag is false. Approval is bound to an exact action name, target, and scope. A decision marked `requires_approval` additionally requires an approved record before artifact attachment. Identity of the approver is not authenticated in v0.
 - The REST API calls the same `BridgeService` methods as the CLI. MCP is intentionally deferred until these core invariants pass tests.
 
 See [the v0 workflow design](docs/MINIMAL_WORKFLOW_V0.md) for state transitions, API contract, limitations, and acceptance-test mapping.
