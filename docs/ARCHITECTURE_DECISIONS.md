@@ -44,13 +44,13 @@
 
 ## Adoption order
 
-1. Minimal shared core, persistence, and workflow invariants (v0: SQLite, CLI, and loopback HTTP API).
-2. Validate sealed positions, dissent preservation, export reproducibility, and approval enforcement with automated tests.
-3. Add authenticated participant identity and stronger approval/tool capability boundaries.
-4. Add provider adapters and actual multi-agent orchestration only after provider identity, state, and failure semantics are defined.
-5. Implement the standard Claude directive → GPT execution → Claude critique → GPT revision cycle, with Grok as an equal peer and specialist routing by task.
-6. Persist Auto and Manual execution modes separately from independent/open collaboration mode; Auto may perform only reversible, low-risk in-scope work, while protected actions retain human approval gates.
-7. Expand integration, evaluation, recovery, observability, and operational hardening.
+1. Minimal shared core, SQLite persistence, and workflow invariants (v0.1: shared core, CLI, loopback HTTP API, and MCP stdio adapter).
+2. Validate sealed positions, dissent preservation, export reproducibility, scoped approvals, task-scoped identity, and event/projection replay with automated tests.
+3. Add authenticated provider adapters and provider-account identity binding only after provider-specific state, rate limits, and failure semantics are defined.
+4. Implement the standard Claude directive → GPT execution → Claude critique → GPT revision cycle, with Grok as an equal peer and specialist routing by task.
+5. Persist Auto and Manual execution modes separately from independent/open collection mode; Auto may perform only reversible, low-risk in-scope work, while protected actions retain human approval gates.
+6. Add remote Streamable HTTP MCP with per-client authentication and transport security; do not expose the current local server remotely.
+7. Expand integration, evaluation, recovery, observability, token rotation/revocation, and operational hardening.
 
 ## ADR-008: Standard build protocol and execution modes
 
