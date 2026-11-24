@@ -6,9 +6,9 @@ import json
 import secrets
 import sqlite3
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, ClassVar
 
