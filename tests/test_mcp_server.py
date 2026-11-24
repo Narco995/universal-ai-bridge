@@ -39,6 +39,8 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("position_submit", names)
                 self.assertIn("positions_reveal", names)
                 self.assertIn("timeline_export", names)
+                for human_only_tool in ("task_create", "participant_issue", "collection_close", "approval_record"):
+                    self.assertNotIn(human_only_tool, names)
                 self.assertNotIn("task_create", names)
 
                 claude_submit = await claude.call_tool(
@@ -80,6 +82,41 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                 visible = {p["author"]: p.get("content") for p in after_reveal.structured_content["positions"]}
                 self.assertEqual(visible["claude"], "Claude's independent architecture proposal")
                 self.assertEqual(visible["gpt"], "GPT's independent implementation proposal")
+
+                decision = await owner.call_tool(
+                    "decision_record",
+                    {
+                        "task_id": task_id,
+                        "choice": "Keep the shared event store",
+                        "rationale": "The test confirms the owner process cannot self-approve.",
+                        "requires_approval": False,
+                    },
+                )
+                self.assertFalse(decision.is_error)
+                action_args = {
+                    "task_id": task_id,
+                    "action_name": "deploy",
+                    "target": "production",
+                    "scope": "release 1.0",
+                }
+                owner_server_with_errors = build_mcp_server(database, credentials["owner_token"])
+                async with Client(owner_server_with_errors, raise_exceptions=False) as restricted_owner:
+                    blocked = await restricted_owner.call_tool("action_authorize", action_args)
+                    self.assertTrue(blocked.is_error)
+
+                # Simulate the human principal approving through the trusted CLI/HTTP path.
+                service.record_approval(
+                    task_id,
+                    "approve",
+                    "Human approved this exact deployment",
+                    action_name="deploy",
+                    target="production",
+                    scope="release 1.0",
+                )
+                async with Client(owner_server_with_errors) as approved_owner:
+                    allowed = await approved_owner.call_tool("action_authorize", action_args)
+                    self.assertFalse(allowed.is_error)
+                    self.assertTrue(allowed.structured_content["authorized"])
 
                 integrity = await owner.call_tool("event_chain_verify", {"task_id": task_id})
                 self.assertFalse(integrity.is_error)
