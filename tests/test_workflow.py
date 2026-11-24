@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from universal_ai_bridge import ApprovalRequired, BridgeService, Conflict, Forbidden
+from universal_ai_bridge import ApprovalRequired, BridgeService, Conflict, Forbidden, Unauthorized
 
 
 class BridgeWorkflowTests(unittest.TestCase):
@@ -202,10 +202,10 @@ class BridgeWorkflowTests(unittest.TestCase):
         self.assertEqual(principal["role"], "participant")
         owner = self.service.authenticate_principal(self.task_id, credentials["owner_token"])
         self.assertEqual(owner["role"], "owner")
-        with self.assertRaises(Exception):
+        with self.assertRaises(Unauthorized):
             self.service.authenticate_principal(self.task_id, "not-a-valid-token")
         other_task = self.service.create_task("Another task", ["Independent scope"])
-        with self.assertRaises(Exception):
+        with self.assertRaises(Unauthorized):
             self.service.authenticate_principal(other_task["task_id"], participant)
         exported = json.dumps(self.service.export_timeline(self.task_id))
         self.assertNotIn(participant, exported)
