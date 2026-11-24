@@ -301,6 +301,7 @@ class BridgeService:
             )
             self._append_event(db, "principal_issued", task_id, actor, {
                 "principal_id": owner_id, "name": "human", "role": "owner",
+                "token_hash": hashlib.sha256(owner_token.encode("utf-8")).hexdigest(),
             })
             for author, token in participant_tokens.items():
                 principal_id = _id("principal")
@@ -310,6 +311,7 @@ class BridgeService:
                 )
                 self._append_event(db, "principal_issued", task_id, actor, {
                     "principal_id": principal_id, "name": author, "role": "participant",
+                    "token_hash": hashlib.sha256(token.encode("utf-8")).hexdigest(),
                 })
             row = self._task_row(db, task_id)
             result = self._task_dict(row)
@@ -336,6 +338,40 @@ class BridgeService:
                 if hmac.compare_digest(row["token_hash"], digest):
                     return {"principal_id": row["principal_id"], "name": row["name"], "role": row["role"]}
         raise Unauthorized("invalid task-scoped bearer token")
+
+    def issue_participant(self, task_id: str, name: str, actor: str = "human") -> dict[str, str]:
+        """Issue a one-time task-scoped participant credential while collection is open."""
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("participant name is required")
+        name = name.strip()
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        principal_id, now = _id("principal"), _now()
+        with self._transaction() as db:
+            task = self._task_row(db, task_id)
+            if task["status"] != "collecting":
+                raise Conflict("participants can only be added while collection is open")
+            existing = db.execute(
+                "SELECT principal_id FROM principals WHERE task_id = ? AND name = ? AND role = 'participant'",
+                (task_id, name),
+            ).fetchone()
+            if existing:
+                raise Conflict(f"participant already exists: {name}")
+            db.execute(
+                "INSERT INTO principals(principal_id, task_id, name, role, token_hash, created_at) VALUES (?, ?, ?, 'participant', ?, ?)",
+                (principal_id, task_id, name, token_hash, now),
+            )
+            self._append_event(db, "principal_issued", task_id, actor, {
+                "principal_id": principal_id, "name": name, "role": "participant",
+                "token_hash": token_hash,
+            })
+        return {
+            "task_id": task_id,
+            "principal_id": principal_id,
+            "name": name,
+            "role": "participant",
+            "token": token,
+        }
 
     def submit_position(self, task_id: str, author: str, content: str, actor: str = "human") -> dict[str, Any]:
         if not isinstance(author, str) or not isinstance(content, str):
@@ -439,8 +475,6 @@ class BridgeService:
         choice, rationale = choice.strip(), rationale.strip()
         if not choice or not rationale:
             raise ValueError("choice and rationale are required")
-        if not isinstance(requires_approval, bool):
-            raise ValueError("requires_approval must be a boolean")
         supporting = list(dict.fromkeys(self._string_list(supporting_position_ids, "supporting_position_ids")))
         dissent = list(dict.fromkeys(self._string_list(considered_not_chosen_position_ids, "considered_not_chosen_position_ids")))
         if set(supporting) & set(dissent):
@@ -551,12 +585,18 @@ class BridgeService:
             decision = db.execute("SELECT * FROM decisions WHERE decision_id = ?", (task["current_decision_id"],)).fetchone()
             if decision["status"] in {"rejected", "changes_requested"}:
                 raise Conflict(f"the current decision is {decision['status']}")
-            if action in {"reject", "request_changes"} and decision["status"] != "awaiting_approval":
-                raise Conflict("reject/request_changes requires a decision awaiting approval")
+            decision_scope = action_name == "decision_acceptance" and target == task_id and scope == decision["decision_id"]
+            if action in {"reject", "request_changes"}:
+                if not decision_scope:
+                    raise ValueError("reject/request_changes must target this decision's decision_acceptance scope")
+                if decision["status"] != "awaiting_approval":
+                    raise Conflict("reject/request_changes requires a decision awaiting approval")
             if action == "approve" and decision["status"] not in {"awaiting_approval", "decided", "approved"}:
                 raise Conflict(f"the current decision cannot be approved while {decision['status']}")
+            if action == "approve" and action_name == "decision_acceptance" and not decision_scope:
+                raise ValueError("decision_acceptance approval must target this task and current decision")
             next_status = decision["status"]
-            if decision["requires_approval"]:
+            if decision["requires_approval"] and decision_scope:
                 next_status = {"approve": "approved", "reject": "rejected", "request_changes": "changes_requested"}[action]
             db.execute(
                 """INSERT INTO approvals(approval_id, decision_id, actor, action, action_name, target, scope, expires_at, note, created_at)
@@ -667,12 +707,16 @@ class BridgeService:
                 raise Conflict("no decision exists for this task")
             decision = db.execute("SELECT * FROM decisions WHERE decision_id = ?", (task["current_decision_id"],)).fetchone()
             if decision["requires_approval"]:
-                active_approval = db.execute(
-                    "SELECT approval_id FROM approvals WHERE decision_id = ? AND action = 'approve' AND expires_at > ? ORDER BY created_at DESC LIMIT 1",
-                    (decision["decision_id"], _now()),
+                decision_approval = db.execute(
+                    """SELECT approval_id FROM approvals
+                       WHERE decision_id = ? AND action = 'approve'
+                         AND action_name = 'decision_acceptance'
+                         AND target = ? AND scope = ? AND expires_at > ?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (decision["decision_id"], task_id, decision["decision_id"], _now()),
                 ).fetchone()
-                if decision["status"] != "approved" or active_approval is None:
-                    raise ApprovalRequired("a valid, unexpired human approval is required before attaching an implementation artifact")
+                if decision["status"] != "approved" or decision_approval is None:
+                    raise ApprovalRequired("a valid, unexpired decision-acceptance approval is required before attaching an implementation artifact")
             if decision["status"] in {"rejected", "changes_requested"}:
                 raise Conflict(f"current decision is {decision['status']}")
             db.execute(
@@ -828,7 +872,7 @@ class BridgeService:
                         projection["task_id"] == event["task_id"]
                         and projection["name"] == payload["name"]
                         and projection["role"] == payload["role"]
-                        and bool(projection["token_hash"])
+                        and projection["token_hash"] == payload.get("token_hash")
                     )
                 else:
                     continue
