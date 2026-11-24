@@ -24,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--objective", required=True)
     create.add_argument("--criteria", action="append", required=True, help="repeat for each acceptance criterion")
     create.add_argument("--mode", choices=["independent", "open"], default="independent")
+    create.add_argument("--execution-mode", choices=["auto", "manual"], default="manual")
     create.add_argument("--required-author", action="append", default=[])
     show = task_commands.add_parser("show")
     show.add_argument("task_id")
@@ -103,7 +104,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "task":
             if args.task_command == "create":
-                _print(service.create_task(args.objective, args.criteria, args.mode, args.required_author))
+                _print(service.create_task(
+                    args.objective, args.criteria, args.mode, args.required_author,
+                    execution_mode=args.execution_mode,
+                ))
             elif args.task_command == "show":
                 _print(service.get_task(args.task_id))
             elif args.task_command == "close":
