@@ -672,7 +672,86 @@ class BridgeService:
                 if row["event_hash"] != expected:
                     return {"valid": False, "event_id": row["event_id"], "reason": "event_hash_mismatch"}
                 previous_hash = row["event_hash"]
-            return {"valid": True, "events_checked": len(rows), "head_hash": previous_hash}
+            # Verify that queryable SQLite projections still agree with their source events.
+            event_counts = {
+                "tasks": sum(row["event_type"] == "task_created" for row in rows),
+                "positions": sum(row["event_type"] == "position_submitted" for row in rows),
+                "decisions": sum(row["event_type"] == "decision_recorded" for row in rows),
+                "approvals": sum(row["event_type"] == "approval_recorded" for row in rows),
+                "artifacts": sum(row["event_type"] == "artifact_attached" for row in rows),
+            }
+            for table, expected_count in event_counts.items():
+                actual_count = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                if actual_count != expected_count:
+                    return {
+                        "valid": False,
+                        "reason": "projection_count_mismatch",
+                        "table": table,
+                        "expected": expected_count,
+                        "actual": actual_count,
+                    }
+
+            for event in rows:
+                payload = json.loads(event["payload_json"])
+                kind = event["event_type"]
+                if kind == "task_created":
+                    projection = db.execute("SELECT * FROM tasks WHERE task_id = ?", (event["task_id"],)).fetchone()
+                    matches = projection is not None and (
+                        projection["objective"] == payload["objective"]
+                        and json.loads(projection["acceptance_criteria_json"]) == payload["acceptance_criteria"]
+                        and projection["mode"] == payload["mode"]
+                        and json.loads(projection["required_authors_json"]) == payload["required_authors"]
+                    )
+                elif kind == "position_submitted":
+                    projection = db.execute("SELECT * FROM positions WHERE position_id = ?", (payload["position_id"],)).fetchone()
+                    matches = projection is not None and (
+                        projection["task_id"] == event["task_id"]
+                        and projection["author"] == payload["author"]
+                        and projection["content"] == payload["content"]
+                        and projection["content_hash"] == payload["content_hash"]
+                        and projection["submission_method"] == payload["submission_method"]
+                    )
+                elif kind == "decision_recorded":
+                    projection = db.execute("SELECT * FROM decisions WHERE decision_id = ?", (payload["decision_id"],)).fetchone()
+                    matches = projection is not None and (
+                        projection["task_id"] == event["task_id"]
+                        and projection["choice"] == payload["choice"]
+                        and projection["rationale"] == payload["rationale"]
+                        and json.loads(projection["supporting_position_ids_json"]) == payload["supporting_position_ids"]
+                        and json.loads(projection["considered_not_chosen_ids_json"]) == payload["considered_not_chosen_position_ids"]
+                        and bool(projection["requires_approval"]) == payload["requires_approval"]
+                        and projection["supersedes_decision_id"] == payload["supersedes_decision_id"]
+                    )
+                elif kind == "approval_recorded":
+                    projection = db.execute("SELECT * FROM approvals WHERE approval_id = ?", (payload["approval_id"],)).fetchone()
+                    matches = projection is not None and (
+                        projection["decision_id"] == payload["decision_id"]
+                        and projection["actor"] == event["actor"]
+                        and projection["action"] == payload["action"]
+                        and projection["action_name"] == payload["action_name"]
+                        and projection["target"] == payload["target"]
+                        and projection["scope"] == payload["scope"]
+                        and projection["expires_at"] == payload["expires_at"]
+                        and projection["note"] == payload["note"]
+                    )
+                elif kind == "artifact_attached":
+                    projection = db.execute("SELECT * FROM artifacts WHERE artifact_id = ?", (payload["artifact_id"],)).fetchone()
+                    matches = projection is not None and (
+                        projection["task_id"] == event["task_id"]
+                        and projection["kind"] == payload["kind"]
+                        and projection["uri"] == payload["uri"]
+                        and projection["sha256"] == payload["sha256"]
+                    )
+                else:
+                    continue
+                if not matches:
+                    return {
+                        "valid": False,
+                        "event_id": event["event_id"],
+                        "reason": "projection_mismatch",
+                        "event_type": kind,
+                    }
+            return {"valid": True, "events_checked": len(rows), "head_hash": previous_hash, "projections_verified": True}
 
     def markdown_export(self, task_id: str, viewer: str = "human") -> str:
         data = self.export_timeline(task_id, viewer=viewer)
