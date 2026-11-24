@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import secrets
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -46,8 +48,6 @@ class BridgeService:
     """SQLite-backed workflow. All transports should call this service."""
 
     TERMINAL_VISIBLE_STATES = {"revealed", "decided", "awaiting_approval", "approved", "rejected", "changes_requested", "implemented"}
-    LOW_RISK_ACTIONS = {"read", "list", "inspect", "export", "status", "analyze"}
-
     def __init__(self, database: str | Path = "bridge.sqlite3") -> None:
         raw_database = str(database)
         if raw_database == ":memory:":
@@ -101,6 +101,16 @@ class BridgeService:
                     revealed_at TEXT,
                     current_decision_id TEXT
                 );
+                CREATE TABLE IF NOT EXISTS principals (
+                    principal_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+                    name TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK (role IN ('owner', 'participant')),
+                    token_hash TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(task_id, name, role)
+                );
+                CREATE INDEX IF NOT EXISTS idx_principals_task ON principals(task_id);
                 CREATE TABLE IF NOT EXISTS positions (
                     position_id TEXT PRIMARY KEY,
                     task_id TEXT NOT NULL REFERENCES tasks(task_id),
@@ -250,6 +260,8 @@ class BridgeService:
     ) -> dict[str, Any]:
         if not isinstance(objective, str):
             raise ValueError("objective must be a string")
+        if not isinstance(actor, str) or not actor.strip():
+            raise ValueError("actor must be a non-empty string")
         objective = objective.strip()
         criteria_input = self._string_list(acceptance_criteria, "acceptance_criteria")
         authors_input = self._string_list(required_authors, "required_authors")
@@ -262,6 +274,9 @@ class BridgeService:
         if not isinstance(mode, str) or mode not in {"independent", "open"}:
             raise ValueError("mode must be 'independent' or 'open'")
         task_id, now = _id("task"), _now()
+        owner_token = secrets.token_urlsafe(32)
+        participant_tokens = {author: secrets.token_urlsafe(32) for author in authors}
+        credentials = {"owner_token": owner_token, "participant_tokens": participant_tokens}
         with self._transaction() as db:
             db.execute(
                 """INSERT INTO tasks(task_id, objective, acceptance_criteria_json, mode, required_authors_json,
@@ -275,12 +290,48 @@ class BridgeService:
                 "required_authors": authors,
                 "submission_policy": "manual_until_provider_adapters_exist",
             })
+            owner_id = _id("principal")
+            db.execute(
+                "INSERT INTO principals(principal_id, task_id, name, role, token_hash, created_at) VALUES (?, ?, ?, 'owner', ?, ?)",
+                (owner_id, task_id, "human", hashlib.sha256(owner_token.encode("utf-8")).hexdigest(), now),
+            )
+            self._append_event(db, "principal_issued", task_id, actor, {
+                "principal_id": owner_id, "name": "human", "role": "owner",
+            })
+            for author, token in participant_tokens.items():
+                principal_id = _id("principal")
+                db.execute(
+                    "INSERT INTO principals(principal_id, task_id, name, role, token_hash, created_at) VALUES (?, ?, ?, 'participant', ?, ?)",
+                    (principal_id, task_id, author, hashlib.sha256(token.encode("utf-8")).hexdigest(), now),
+                )
+                self._append_event(db, "principal_issued", task_id, actor, {
+                    "principal_id": principal_id, "name": author, "role": "participant",
+                })
             row = self._task_row(db, task_id)
-            return self._task_dict(row)
+            result = self._task_dict(row)
+            # Secrets are returned once to the task creator and are never stored in events.
+            result["credentials"] = credentials
+            return result
 
     def get_task(self, task_id: str) -> dict[str, Any]:
         with self._connection() as db:
             return self._task_dict(self._task_row(db, task_id))
+
+    def authenticate_principal(self, task_id: str, token: str) -> dict[str, str]:
+        """Resolve a task-scoped bearer token without trusting caller-supplied identity headers."""
+        if not isinstance(token, str) or not token.strip():
+            raise Forbidden("a valid task-scoped bearer token is required")
+        digest = hashlib.sha256(token.strip().encode("utf-8")).hexdigest()
+        with self._connection() as db:
+            self._task_row(db, task_id)
+            rows = db.execute(
+                "SELECT principal_id, name, role, token_hash FROM principals WHERE task_id = ?",
+                (task_id,),
+            ).fetchall()
+            for row in rows:
+                if hmac.compare_digest(row["token_hash"], digest):
+                    return {"principal_id": row["principal_id"], "name": row["name"], "role": row["role"]}
+        raise Forbidden("invalid task-scoped bearer token")
 
     def submit_position(self, task_id: str, author: str, content: str, actor: str = "human") -> dict[str, Any]:
         if not isinstance(author, str) or not isinstance(content, str):
@@ -379,6 +430,8 @@ class BridgeService:
     ) -> dict[str, Any]:
         if not isinstance(choice, str) or not isinstance(rationale, str):
             raise ValueError("choice and rationale must be strings")
+        if not isinstance(requires_approval, bool):
+            raise ValueError("requires_approval must be a boolean")
         choice, rationale = choice.strip(), rationale.strip()
         if not choice or not rationale:
             raise ValueError("choice and rationale are required")
@@ -543,7 +596,9 @@ class BridgeService:
             decision = db.execute("SELECT * FROM decisions WHERE decision_id = ?", (task["current_decision_id"],)).fetchone()
             if decision["status"] in {"rejected", "changes_requested"}:
                 raise Conflict(f"current decision is {decision['status']}")
-            approval_required = bool(decision["requires_approval"]) or action_name not in self.LOW_RISK_ACTIONS
+            # This endpoint is an authorization boundary, not a read-operation classifier.
+            # Every caller reaching it must present an exact, unexpired human approval.
+            approval_required = True
             if approval_required:
                 approval = db.execute(
                     """SELECT approval_id FROM approvals
@@ -589,9 +644,15 @@ class BridgeService:
     ) -> dict[str, Any]:
         if not isinstance(kind, str) or not isinstance(uri, str):
             raise ValueError("artifact kind and uri must be strings")
+        if not isinstance(kind, str) or not isinstance(uri, str):
+            raise ValueError("artifact kind and uri must be strings")
         kind, uri = kind.strip(), uri.strip()
         if not kind or not uri:
             raise ValueError("artifact kind and uri are required")
+        if sha256 is not None and (not isinstance(sha256, str) or len(sha256) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in sha256)):
+            raise ValueError("sha256 must be a 64-character hexadecimal digest")
+        if sha256 is not None:
+            sha256 = sha256.lower()
         if sha256 is not None:
             if not isinstance(sha256, str) or len(sha256) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in sha256):
                 raise ValueError("sha256 must be a 64-character hexadecimal digest")
@@ -601,8 +662,13 @@ class BridgeService:
             if not task["current_decision_id"]:
                 raise Conflict("no decision exists for this task")
             decision = db.execute("SELECT * FROM decisions WHERE decision_id = ?", (task["current_decision_id"],)).fetchone()
-            if decision["requires_approval"] and decision["status"] != "approved":
-                raise ApprovalRequired("human approval is required before attaching an implementation artifact")
+            if decision["requires_approval"]:
+                active_approval = db.execute(
+                    "SELECT approval_id FROM approvals WHERE decision_id = ? AND action = 'approve' AND expires_at > ? ORDER BY created_at DESC LIMIT 1",
+                    (decision["decision_id"], _now()),
+                ).fetchone()
+                if decision["status"] != "approved" or active_approval is None:
+                    raise ApprovalRequired("a valid, unexpired human approval is required before attaching an implementation artifact")
             if decision["status"] in {"rejected", "changes_requested"}:
                 raise Conflict(f"current decision is {decision['status']}")
             db.execute(
@@ -688,6 +754,7 @@ class BridgeService:
                 "decisions": sum(row["event_type"] == "decision_recorded" for row in rows),
                 "approvals": sum(row["event_type"] == "approval_recorded" for row in rows),
                 "artifacts": sum(row["event_type"] == "artifact_attached" for row in rows),
+                "principals": sum(row["event_type"] == "principal_issued" for row in rows),
             }
             for table, expected_count in event_counts.items():
                 actual_count = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
@@ -751,6 +818,14 @@ class BridgeService:
                         and projection["uri"] == payload["uri"]
                         and projection["sha256"] == payload["sha256"]
                     )
+                elif kind == "principal_issued":
+                    projection = db.execute("SELECT * FROM principals WHERE principal_id = ?", (payload["principal_id"],)).fetchone()
+                    matches = projection is not None and (
+                        projection["task_id"] == event["task_id"]
+                        and projection["name"] == payload["name"]
+                        and projection["role"] == payload["role"]
+                        and bool(projection["token_hash"])
+                    )
                 else:
                     continue
                 if not matches:
@@ -760,6 +835,44 @@ class BridgeService:
                         "reason": "projection_mismatch",
                         "event_type": kind,
                     }
+            # Reconstruct workflow state from events and compare mutable projections.
+            task_states: dict[str, dict[str, Any]] = {}
+            decision_states: dict[str, str] = {}
+            for event in rows:
+                kind = event["event_type"]
+                payload = json.loads(event["payload_json"])
+                task_id = event["task_id"]
+                if kind == "task_created":
+                    task_states[task_id] = {
+                        "status": "collecting",
+                        "current_decision_id": None,
+                        "revealed": False,
+                    }
+                elif kind in {"collection_ready", "collection_closed"}:
+                    task_states[task_id]["status"] = "ready_to_reveal"
+                elif kind == "positions_revealed":
+                    task_states[task_id]["status"] = "revealed"
+                    task_states[task_id]["revealed"] = True
+                elif kind == "decision_recorded":
+                    decision_states[payload["decision_id"]] = payload["status"]
+                    task_states[task_id]["status"] = payload["status"]
+                    task_states[task_id]["current_decision_id"] = payload["decision_id"]
+                elif kind == "approval_recorded":
+                    decision_states[payload["decision_id"]] = payload["resulting_status"]
+                    if task_states[task_id]["current_decision_id"] == payload["decision_id"]:
+                        task_states[task_id]["status"] = payload["resulting_status"]
+                elif kind == "artifact_attached":
+                    task_states[task_id]["status"] = "implemented"
+
+            for task_id, expected in task_states.items():
+                projection = db.execute("SELECT status, current_decision_id, revealed_at FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+                if projection is None or projection["status"] != expected["status"] or projection["current_decision_id"] != expected["current_decision_id"] or bool(projection["revealed_at"]) != expected["revealed"]:
+                    return {"valid": False, "reason": "task_state_projection_mismatch", "task_id": task_id}
+            for decision_id, expected_status in decision_states.items():
+                projection = db.execute("SELECT status FROM decisions WHERE decision_id = ?", (decision_id,)).fetchone()
+                if projection is None or projection["status"] != expected_status:
+                    return {"valid": False, "reason": "decision_state_projection_mismatch", "decision_id": decision_id}
+
             return {"valid": True, "events_checked": len(rows), "head_hash": previous_hash, "projections_verified": True}
 
     def markdown_export(self, task_id: str, viewer: str = "human") -> str:
