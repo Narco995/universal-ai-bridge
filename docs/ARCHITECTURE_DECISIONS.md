@@ -34,9 +34,9 @@
 
 ## ADR-006: Governance at the tool boundary
 
-**Decision:** Enforce least privilege, action classification, exact action/target/scope approval matching, and expiring approval gates in the bridge rather than relying on prompt wording. v0 uses a conservative low-risk allowlist and requires approval for unknown action names.
+**Decision:** Enforce least privilege, exact action/target/scope approval matching, separate decision-acceptance and side-effect approvals, and expiring approval gates in the bridge rather than relying on prompt wording. Every action submitted to the authorization endpoint requires an exact approval; read-only routes do not use that endpoint.
 
-**Rationale:** Model instructions cannot serve as authorization controls. The v0 approver identity remains an unauthenticated actor label; secure identity and signed approval credentials are required before remote or multi-user use.
+**Rationale:** Model instructions cannot serve as authorization controls. v0 authenticates possession of task-scoped bearer credentials but does not verify real-world human identity or external provider identity; TLS, credential revocation, and signed approvals are required before remote or production use.
 
 ## ADR-007: Evaluation before production claims
 
