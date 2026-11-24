@@ -10,9 +10,11 @@ Prove a small collaboration workflow before adding provider integrations, automa
 
 A task becomes `ready_to_reveal` when every required author has submitted, or when the owner explicitly closes a non-empty collection. Reveal is rejected until then. A task in `changes_requested` may receive a superseding decision; earlier decisions and their dispositions remain in the history.
 
+`mode` is the position-collection mode (`independent` or `open`). `execution_mode` is a separate Auto/Manual policy preference, defaulting to `manual`. v0.1 persists this choice but does not yet execute actions automatically; protected actions still require human approval.
+
 ## Data model
 
-- **Task:** objective, acceptance criteria, mode, required author labels, state, current decision.
+- **Task:** objective, acceptance criteria, collection mode (`independent` or `open`), execution mode (`auto` or `manual`), required author labels, state, current decision.
 - **Principal:** task-scoped owner or participant identity, random bearer-token hash, and creation timestamp.
 - **Position:** author derived from a participant credential on HTTP; body, content hash, timestamp, and `submission_method=manual`.
 - **Decision:** chosen option, rationale, supporting position IDs, considered-not-chosen position IDs, approval requirement, status, and superseded decision link.
