@@ -339,7 +339,7 @@ class BridgeWorkflowTests(unittest.TestCase):
         self.service.submit_position(self.task_id, "claude", "Option A")
         self.service.submit_position(self.task_id, "gpt", "Option B")
         self.service.reveal(self.task_id)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             self.service.record_decision(
                 self.task_id, "A", "Bad flag", requires_approval="false"
             )
