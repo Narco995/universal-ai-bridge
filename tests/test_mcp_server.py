@@ -38,10 +38,20 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                 listing = await claude.list_tools()
                 names = {tool.name for tool in listing.tools}
                 self.assertIn("position_submit", names)
-                self.assertIn("positions_reveal", names)
+                self.assertIn("positions_list", names)
                 self.assertIn("timeline_export", names)
-                for human_only_tool in ("task_create", "participant_issue", "collection_close", "approval_record"):
-                    self.assertNotIn(human_only_tool, names)
+                self.assertNotIn("positions_reveal", names)
+                self.assertNotIn("decision_record", names)
+                self.assertNotIn("action_authorize", names)
+                self.assertNotIn("artifact_attach", names)
+
+                owner_listing = await owner.list_tools()
+                owner_names = {tool.name for tool in owner_listing.tools}
+                self.assertIn("positions_reveal", owner_names)
+                self.assertIn("decision_record", owner_names)
+                self.assertIn("action_authorize", owner_names)
+                self.assertIn("event_chain_verify", owner_names)
+                self.assertNotIn("position_submit", owner_names)
 
                 claude_submit = await claude.call_tool(
                     "position_submit",
