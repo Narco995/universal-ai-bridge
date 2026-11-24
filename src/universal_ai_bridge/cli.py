@@ -57,10 +57,15 @@ def build_parser() -> argparse.ArgumentParser:
     approval.add_argument("task_id")
     approval.add_argument("--action", choices=["approve", "reject", "request_changes"], required=True)
     approval.add_argument("--note", required=True)
+    approval.add_argument("--action-name", required=True)
+    approval.add_argument("--target", required=True)
+    approval.add_argument("--scope", required=True)
 
     action = commands.add_parser("action", help="check whether an action is authorized")
     action.add_argument("task_id")
     action.add_argument("--name", required=True)
+    action.add_argument("--target", required=True)
+    action.add_argument("--scope", required=True)
 
     artifact = commands.add_parser("artifact", help="attach an implementation artifact pointer")
     artifact.add_argument("task_id")
@@ -106,9 +111,14 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "decision":
             _print(service.record_decision(args.task_id, args.choice, args.rationale, args.supporting, args.considered_not_chosen, args.requires_approval))
         elif args.command == "approval":
-            _print(service.record_approval(args.task_id, args.action, args.note))
+            _print(service.record_approval(
+                args.task_id, args.action, args.note,
+                action_name=args.action_name, target=args.target, scope=args.scope,
+            ))
         elif args.command == "action":
-            _print(service.authorize_action(args.task_id, args.name))
+            _print(service.authorize_action(
+                args.task_id, args.name, target=args.target, scope=args.scope,
+            ))
         elif args.command == "artifact":
             _print(service.attach_artifact(args.task_id, args.kind, args.uri, args.sha256))
         elif args.command == "export":
