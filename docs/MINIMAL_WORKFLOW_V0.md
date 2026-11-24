@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Prove a small collaboration workflow before adding MCP adapters, model-provider integrations, orchestration policies, a UI, or scoring. CLI and HTTP call the same `BridgeService`; workflow rules live in one application core.
+Prove a small collaboration workflow before adding provider integrations, automated orchestration policies, a UI, or scoring. v0.1 adds a local MCP stdio adapter after the core invariants; CLI, HTTP, and MCP all call the same `BridgeService`.
 
 ## State model
 
