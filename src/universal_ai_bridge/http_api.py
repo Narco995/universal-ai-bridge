@@ -131,6 +131,7 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
                 result = service.create_task(
                     body.get("objective", ""), body.get("acceptance_criteria", []),
                     body.get("mode", "independent"), body.get("required_authors", []),
+                    execution_mode=body.get("execution_mode", "manual"),
                 )
                 self._send(201, result)
                 return
