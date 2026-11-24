@@ -4,7 +4,15 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
-from .core import ApprovalRequired, BridgeError, BridgeService, Conflict, Forbidden, NotFound, Unauthorized
+from .core import (
+    ApprovalRequired,
+    BridgeError,
+    BridgeService,
+    Conflict,
+    Forbidden,
+    NotFound,
+    Unauthorized,
+)
 
 
 class BridgeHTTPServer(ThreadingHTTPServer):
@@ -22,7 +30,7 @@ class BridgeHTTPServer(ThreadingHTTPServer):
 class BridgeRequestHandler(BaseHTTPRequestHandler):
     server: BridgeHTTPServer
 
-    def log_message(self, format: str, *args) -> None:  # noqa: A003
+    def log_message(self, format: str, *args) -> None:
         # Keep request logs free of request bodies and model position content.
         super().log_message(format, *args)
 
@@ -49,7 +57,7 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length) if length else b"{}"
         parsed = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):
-            raise ValueError("JSON request body must be an object")
+            raise TypeError("JSON request body must be an object")
         return parsed
 
     def _principal(self, task_id: str) -> dict[str, str]:
@@ -76,7 +84,7 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
             status = 423
         elif isinstance(exc, Conflict):
             status = 409
-        elif isinstance(exc, (ValueError, KeyError, json.JSONDecodeError)):
+        elif isinstance(exc, (ValueError, TypeError, KeyError, json.JSONDecodeError)):
             status = 400
         elif isinstance(exc, BridgeError):
             status = 409
@@ -89,7 +97,7 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
             message = str(exc)
         self._send(status, {"error": type(exc).__name__, "message": message})
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         parsed = urlparse(self.path)
         parts = [unquote(p) for p in parsed.path.strip("/").split("/") if p]
         try:
@@ -110,10 +118,10 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
                     self._send(200, self.server.service.export_timeline(task_id, viewer=viewer))
                     return
             self._send(404, {"error": "NotFound", "message": "route not found"})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - transport boundary sanitizes all uncaught failures
             self._error(exc)
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         parsed = urlparse(self.path)
         parts = [unquote(p) for p in parsed.path.strip("/").split("/") if p]
         try:
