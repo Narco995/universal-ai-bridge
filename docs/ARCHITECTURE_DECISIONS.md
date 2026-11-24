@@ -58,7 +58,7 @@
 
 **Rationale:** Retain the user's proven review discipline without turning workflow responsibilities into permanent model hierarchy. Keep independence, execution autonomy, and human approval as distinct controls.
 
-**Consequence:** The v0.1 workflow currently implements independent/open collection and approval records; the automated critique/revision orchestrator and runtime Auto/Manual execution policies remain future work.
+**Consequence:** The v0.1 workflow persists independent/open collection mode, Auto/Manual execution-mode preference, and approval records. The automated critique/revision orchestrator and runtime Auto/Manual execution policies remain future work.
 
 ## Deferred
 
