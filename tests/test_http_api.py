@@ -26,10 +26,10 @@ class BridgeHTTPTests(unittest.TestCase):
         self.thread.join(timeout=2)
         self.tmp.cleanup()
 
-    def request_json(self, method, path, payload=None, token=None, spoof_actor=None):
+    def request_json(self, method, path, payload=None, token=None, spoof_actor=None, content_type="application/json"):
         body = json.dumps(payload or {}).encode("utf-8")
         headers = {
-            "Content-Type": "application/json",
+            "Content-Type": content_type,
             "Content-Length": str(len(body)),
         }
         if token:
@@ -173,6 +173,18 @@ class BridgeHTTPTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(next(p for p in listing["positions"] if p["author"] == "claude")["content"], "Claude position")
+
+    def test_http_rejects_non_json_post_content_type(self):
+        status, response = self.request_json(
+            "POST", "/tasks",
+            {
+                "objective": "Reject simple cross-site form content",
+                "acceptance_criteria": ["Require application/json"],
+            },
+            content_type="text/plain",
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("Content-Type must be application/json", response["message"])
 
     def test_http_requires_valid_token_and_participant_cannot_reveal(self):
         task, credentials = self.create_task(("claude",))
