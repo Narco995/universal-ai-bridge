@@ -2,14 +2,29 @@ from __future__ import annotations
 
 import argparse
 import logging
+from functools import wraps
 import os
 import sys
 from pathlib import Path
 from typing import Any
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
-from .core import BridgeService, Forbidden, Unauthorized
+from .core import BridgeError, BridgeService, Forbidden, Unauthorized
+
+
+
+def _tool_error_boundary(function):
+    """Return expected Bridge/policy failures to the model as readable MCP tool errors."""
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except (BridgeError, ValueError) as exc:
+            raise ToolError(str(exc)) from None
+
+    return wrapped
 
 
 def build_mcp_server(
@@ -42,6 +57,7 @@ def build_mcp_server(
     )
 
     @server.tool()
+    @_tool_error_boundary
     def bridge_health() -> dict[str, str]:
         """Return Bridge health and truthful provider-connection status."""
         return {
