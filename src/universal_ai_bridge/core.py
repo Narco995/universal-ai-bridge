@@ -5,7 +5,7 @@ import json
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -131,6 +131,7 @@ class BridgeService:
                     action_name TEXT NOT NULL DEFAULT '',
                     target TEXT NOT NULL DEFAULT '',
                     scope TEXT NOT NULL DEFAULT '',
+                    expires_at TEXT NOT NULL DEFAULT '',
                     note TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
@@ -168,7 +169,7 @@ class BridgeService:
             # Lightweight forward-compatible migration for databases created by
             # the first v0 draft, before approvals were action-scoped.
             approval_columns = {row["name"] for row in db.execute("PRAGMA table_info(approvals)").fetchall()}
-            for column in ("action_name", "target", "scope"):
+            for column in ("action_name", "target", "scope", "expires_at"):
                 if column not in approval_columns:
                     db.execute(f"ALTER TABLE approvals ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
 
@@ -453,6 +454,7 @@ class BridgeService:
         action_name: str = "",
         target: str = "",
         scope: str = "",
+        expires_at: str | None = None,
     ) -> dict[str, Any]:
         if actor != "human":
             raise Forbidden("only the human principal may record an approval")
@@ -463,7 +465,24 @@ class BridgeService:
         note, action_name, target, scope = note.strip(), action_name.strip(), target.strip(), scope.strip()
         if not note or not action_name or not target or not scope:
             raise ValueError("approval requires a note and an exact action_name, target, and scope")
-        approval_id, now = _id("approval"), _now()
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat(timespec="microseconds")
+        if expires_at is None or (isinstance(expires_at, str) and not expires_at.strip()):
+            expires_dt = now_dt + timedelta(minutes=15)
+        else:
+            if not isinstance(expires_at, str):
+                raise ValueError("expires_at must be an ISO-8601 timestamp string")
+            try:
+                expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError("expires_at must be a valid ISO-8601 timestamp") from exc
+            if expires_dt.tzinfo is None:
+                raise ValueError("expires_at must include a timezone")
+            expires_dt = expires_dt.astimezone(timezone.utc)
+        if expires_dt <= now_dt:
+            raise ValueError("approval expiry must be in the future")
+        normalized_expiry = expires_dt.isoformat(timespec="microseconds")
+        approval_id = _id("approval")
         with self._transaction() as db:
             task = self._task_row(db, task_id)
             if not task["current_decision_id"]:
@@ -479,9 +498,9 @@ class BridgeService:
             if decision["requires_approval"]:
                 next_status = {"approve": "approved", "reject": "rejected", "request_changes": "changes_requested"}[action]
             db.execute(
-                """INSERT INTO approvals(approval_id, decision_id, actor, action, action_name, target, scope, note, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (approval_id, decision["decision_id"], actor, action, action_name, target, scope, note, now),
+                """INSERT INTO approvals(approval_id, decision_id, actor, action, action_name, target, scope, expires_at, note, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (approval_id, decision["decision_id"], actor, action, action_name, target, scope, normalized_expiry, note, now),
             )
             if next_status != decision["status"]:
                 db.execute("UPDATE decisions SET status = ? WHERE decision_id = ?", (next_status, decision["decision_id"]))
@@ -493,6 +512,7 @@ class BridgeService:
                 "action_name": action_name,
                 "target": target,
                 "scope": scope,
+                "expires_at": normalized_expiry,
                 "note": note,
                 "resulting_status": next_status,
             })
@@ -525,8 +545,9 @@ class BridgeService:
                     """SELECT approval_id FROM approvals
                        WHERE decision_id = ? AND action = 'approve'
                          AND action_name = ? AND target = ? AND scope = ?
+                         AND expires_at > ?
                        ORDER BY created_at DESC LIMIT 1""",
-                    (decision["decision_id"], action_name, target, scope),
+                    (decision["decision_id"], action_name, target, scope, _now()),
                 ).fetchone()
                 if approval is None:
                     raise ApprovalRequired(
