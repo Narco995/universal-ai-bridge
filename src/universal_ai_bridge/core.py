@@ -1139,6 +1139,19 @@ class BridgeService:
             lines.append(f"- {approval['action']} by {approval['actor']}: {approval['note']}")
         lines += ["", "## Artifacts"]
         for artifact in data["artifacts"]:
-            lines.append(f"- {artifact['kind']}: {artifact['uri']} (SHA-256: {artifact['sha256'] or 'not supplied'})")
+            verification = artifact["verification_status"]
+            verified_at = f"; verified at {artifact['verified_at']}" if artifact["verified_at"] else ""
+            note = f"; note: {artifact['verification_note']}" if artifact["verification_note"] else ""
+            lines.append(
+                f"- {artifact['kind']}: {artifact['uri']} "
+                f"(SHA-256: {artifact['sha256'] or 'not supplied'}; verification: `{verification}`"
+                f"{verified_at}{note})"
+            )
+        lines += ["", "## Event timeline"]
+        for event in data["events"]:
+            lines.append(
+                f"- `{event['event_id']}` `{event['occurred_at']}` "
+                f"**{event['event_type']}** by `{event['actor']}`"
+            )
         lines += ["", "## Provenance", f"- Agent connections: `{data['provenance']['agent_connections']}`", f"- Position submission: `{data['provenance']['position_submission']}`", f"- Independence: `{data['provenance']['independent_analysis']}`", ""]
         return "\n".join(lines)

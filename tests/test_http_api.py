@@ -275,6 +275,13 @@ class BridgeHTTPTests(unittest.TestCase):
         status, current_task = self.request_json("GET", f"/tasks/{task_id}", token=owner_token)
         self.assertEqual(status, 200)
         self.assertEqual(current_task["status"], "decided")
+        status, forbidden = self.request_json(
+            "POST", f"/tasks/{task_id}/artifacts/{artifact['artifact_id']}/verify",
+            {"note": "Participant cannot verify implementation"},
+            token=participant_token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(forbidden["error"], "Forbidden")
         status, verified = self.request_json(
             "POST", f"/tasks/{task_id}/artifacts/{artifact['artifact_id']}/verify",
             {"note": "Human inspected the CI run and accepted the evidence"},

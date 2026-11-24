@@ -120,6 +120,9 @@ class BridgeWorkflowTests(unittest.TestCase):
         for expected in ["task_created", "position_submitted", "positions_revealed", "decision_recorded", "approval_recorded", "action_authorized", "artifact_attached", "artifact_verified"]:
             self.assertIn(expected, types)
         self.assertEqual(exported["task"]["status"], "implemented")
+        markdown = self.service.markdown_export(self.task_id)
+        self.assertIn("verification: `verified`", markdown)
+        self.assertIn("artifact_verified", markdown)
         self.assertEqual(exported["approvals"][0]["action"], "approve")
         self.assertEqual(exported["artifacts"][0]["kind"], "commit")
         self.assertEqual(exported["provenance"]["agent_connections"], "not_connected")
@@ -406,6 +409,30 @@ class BridgeWorkflowTests(unittest.TestCase):
             )
         self.assertTrue(self.service.verify_event_chain()["valid"])
 
+    def test_expired_decision_acceptance_blocks_artifact_verification(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        decision = self.service.record_decision(
+            self.task_id, "A", "Decision acceptance is required", requires_approval=True
+        )
+        approval = self.service.record_approval(
+            self.task_id, "approve", "Accepted the decision",
+            action_name="decision_acceptance", target=self.task_id, scope=decision["decision_id"],
+        )
+        artifact = self.service.attach_artifact(
+            self.task_id, "commit", "https://example.invalid/commit/approved"
+        )
+        with sqlite3.connect(self.service.database) as db:
+            db.execute(
+                "UPDATE approvals SET expires_at = ? WHERE approval_id = ?",
+                ("2000-01-01T00:00:00.000000+00:00", approval["approval_id"]),
+            )
+        with self.assertRaises(ApprovalRequired):
+            self.service.verify_artifact(
+                self.task_id, artifact["artifact_id"], "Reviewed the approved implementation"
+            )
+
     def test_artifact_verification_projection_tampering_is_detected(self):
         self.service.submit_position(self.task_id, "claude", "Option A")
         self.service.submit_position(self.task_id, "gpt", "Option B")
@@ -424,7 +451,7 @@ class BridgeWorkflowTests(unittest.TestCase):
             )
         integrity = self.service.verify_event_chain()
         self.assertFalse(integrity["valid"])
-        self.assertEqual(integrity["reason"], "artifact_state_projection_mismatch")
+        self.assertEqual(integrity["reason"], "projection_mismatch")
 
     def test_database_file_is_private_on_posix(self):
         if os.name == "posix":
