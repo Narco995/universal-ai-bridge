@@ -15,7 +15,7 @@ A task becomes `ready_to_reveal` automatically when every required author has su
 - **Task:** objective, acceptance criteria, mode, required author labels, state, current decision.
 - **Position:** author label, body, content hash, timestamp, and `submission_method=manual`.
 - **Decision:** chosen option, rationale, supporting position IDs, considered-not-chosen position IDs, approval requirement, status, and superseded decision link.
-- **Approval:** human actor, approve/reject/request-changes action, note, timestamp.
+- **Approval:** human actor label, approve/reject/request-changes action, exact action name, target, scope, note, and timestamp.
 - **Artifact:** kind, URI, optional SHA-256, timestamp.
 - **Event:** append-only audit record with a global hash chain.
 
@@ -25,7 +25,7 @@ In independent mode, a caller sees its own position body while collection is sea
 
 ## Approval semantics
 
-A decision marked `requires_approval=true` enters `awaiting_approval`. Only the `human` principal can record approval. The authorization check and artifact attachment reject the action until the current decision is approved. The v0 authorization endpoint records that the check passed but does not execute the requested action. A future tool executor must call the same guard immediately before a side effect, using authenticated identity, capability policy, idempotency, and an audit trail.
+A decision marked `requires_approval=true` enters `awaiting_approval`. The application accepts approval only with the `human` actor label, but that label is not authenticated in v0. Every approval is bound to an exact action name, target, and scope; an approval for one target or scope cannot authorize another. The conservative default policy allowlists only `read`, `list`, `inspect`, `export`, `status`, and `analyze` as low-risk actions. Every other action name requires a matching approval even when the decision flag is false. A decision marked `requires_approval=true` also requires an approved record before artifact attachment. The v0 authorization endpoint records that the check passed but does not execute the requested action. A future tool executor must call the same guard immediately before a side effect, using authenticated identity, capability policy, idempotency, and an audit trail.
 
 ## Events and reproducibility
 
@@ -36,7 +36,7 @@ Events include task creation, position submission, collection close/readiness, r
 1. **Sealed positions:** service and HTTP tests verify that author A cannot retrieve author B's body in independent mode before reveal, and can after reveal.
 2. **Preservation:** decision records contain the selected and considered-not-chosen position IDs; export keeps both.
 3. **Reproducibility:** export contains task, positions, reveal/decision/approval events, and artifact pointers; hash-chain verification is tested.
-4. **Approval gate:** authorization and artifact attachment fail while approval is pending and pass after a human approval record exists.
+4. **Approval gate:** consequential/unknown actions fail without an exact action-target-scope approval, even when a caller omits the decision-level approval flag; mismatched approval scope remains blocked.
 5. **No fake agent links:** health, exports, CLI output, and docs state that submissions are manual and providers are not connected.
 
 ## Explicit non-goals
