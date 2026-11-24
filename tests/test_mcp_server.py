@@ -52,6 +52,8 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("action_authorize", owner_names)
                 self.assertIn("event_chain_verify", owner_names)
                 self.assertNotIn("position_submit", owner_names)
+                for human_only_tool in ("task_create", "participant_issue", "collection_close", "approval_record"):
+                    self.assertNotIn(human_only_tool, owner_names)
 
                 claude_submit = await claude.call_tool(
                     "position_submit",
