@@ -18,7 +18,7 @@ Build a provider-neutral collaboration bridge where independent intelligence sys
 
 ## Dynamic task ownership
 
-Each task records one accountable owner and any contributors/reviewers. The owner is selected for that task and may change through a recorded handoff. A participant can lead one task and review another. The default historical workflow (Claude often expands directives, GPT often implements, and another participant independently critiques) is a starting convention only, not a hierarchy or fixed capability boundary.
+Each task records one accountable owner and any contributors/reviewers. The owner is selected for that task and may change through a recorded handoff. A participant can lead one task and review another. The default build workflow is a repeatable collaboration protocol, not a hierarchy: Claude expands the brief into a detailed directive; GPT plans and performs the assigned engineering; Claude independently critiques the actual diff, artifacts, and tests; GPT revises against that critique. Grok is an equal founding peer who can research, architect, implement, challenge, or lead whenever task fit warrants it. Responsibilities can be reassigned by task, but the standard review loop below remains the default unless the human principal explicitly changes it.
 
 ## Independent position protocol
 
@@ -40,12 +40,13 @@ Separate planning from execution. Report changed files, commands, test output, a
 
 ## Review and revision
 
+- For the standard Claude/GPT build cycle, Claude's first critique always triggers a GPT revision or evidence-backed reassessment—even when the critique is positive. A positive review is not proof of correctness; the pass must add verification evidence or close a real gap, not manufacture pointless edits.
 - Review the actual diff, runnable artifact, tests, and claims—not only a summary.
-- Choose an independent reviewer based on task fit; do not reserve review authority to a particular model.
+- Choose additional independent reviewers based on task fit; Grok is a peer contributor, not a permanently assigned red-team role.
 - Record each finding with severity, evidence/location, requested change, response, and disposition.
-- Use at most five critique/revision rounds by default. Unresolved critical/high findings block completion unless the human explicitly accepts a documented residual risk where policy permits.
-- A positive review is not proof of correctness. A required revision/reassessment pass must add evidence or close a verifiable gap, not create pointless edits.
+- The standard cycle is capped at five critique/revision rounds. Unresolved critical/high findings block completion unless the human explicitly accepts a documented residual risk where policy permits.
 - Preserve minority reports and rejected objections in the decision record.
+- The human principal may explicitly choose a different task workflow; record the deviation and rationale.
 
 ## Execution modes and approvals
 
