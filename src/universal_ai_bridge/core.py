@@ -481,3 +481,128 @@ class BridgeService:
             event = self._append_event(db, "action_authorized", task_id, actor, {
                 "action_name": action_name,
                 "decision_id": decision["decision_id"],
+                "authorization_only": True,
+                "does_not_execute_side_effect": True,
+            })
+            return {"authorized": True, "action_name": action_name, "event_id": event["event_id"], "executed": False}
+
+    def attach_artifact(
+        self,
+        task_id: str,
+        kind: str,
+        uri: str,
+        sha256: str | None = None,
+        actor: str = "human",
+    ) -> dict[str, Any]:
+        kind, uri = kind.strip(), uri.strip()
+        if not kind or not uri:
+            raise ValueError("artifact kind and uri are required")
+        artifact_id, now = _id("artifact"), _now()
+        with self._transaction() as db:
+            task = self._task_row(db, task_id)
+            if not task["current_decision_id"]:
+                raise Conflict("no decision exists for this task")
+            decision = db.execute("SELECT * FROM decisions WHERE decision_id = ?", (task["current_decision_id"],)).fetchone()
+            if decision["requires_approval"] and decision["status"] != "approved":
+                raise ApprovalRequired("human approval is required before attaching an implementation artifact")
+            if decision["status"] in {"rejected", "changes_requested"}:
+                raise Conflict(f"current decision is {decision['status']}")
+            db.execute(
+                "INSERT INTO artifacts(artifact_id, task_id, kind, uri, sha256, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (artifact_id, task_id, kind, uri, sha256, now),
+            )
+            db.execute("UPDATE tasks SET status = 'implemented', updated_at = ? WHERE task_id = ?", (now, task_id))
+            self._append_event(db, "artifact_attached", task_id, actor, {
+                "artifact_id": artifact_id, "kind": kind, "uri": uri, "sha256": sha256,
+            })
+            return dict(db.execute("SELECT * FROM artifacts WHERE artifact_id = ?", (artifact_id,)).fetchone())
+
+    def export_timeline(self, task_id: str, viewer: str = "human") -> dict[str, Any]:
+        with self._connection() as db:
+            task_row = self._task_row(db, task_id)
+            task = self._task_dict(task_row)
+            revealed = task["status"] in self.TERMINAL_VISIBLE_STATES
+            position_rows = db.execute("SELECT * FROM positions WHERE task_id = ? ORDER BY submitted_at, position_id", (task_id,)).fetchall()
+            positions = [
+                self._position_dict(row, include_content=(task["mode"] == "open" or revealed or row["author"] == viewer))
+                for row in position_rows
+            ]
+            decisions = [self._decision_dict(row) for row in db.execute("SELECT * FROM decisions WHERE task_id = ? ORDER BY created_at, decision_id", (task_id,)).fetchall()]
+            approvals = [dict(row) for row in db.execute(
+                "SELECT a.* FROM approvals a JOIN decisions d ON d.decision_id = a.decision_id WHERE d.task_id = ? ORDER BY a.created_at, a.approval_id",
+                (task_id,),
+            ).fetchall()]
+            artifacts = [dict(row) for row in db.execute("SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at, artifact_id", (task_id,)).fetchall()]
+            event_rows = db.execute("SELECT * FROM events WHERE task_id = ? ORDER BY event_id", (task_id,)).fetchall()
+            events = []
+            for row in event_rows:
+                payload = json.loads(row["payload_json"])
+                if row["event_type"] == "position_submitted" and task["mode"] == "independent" and not revealed and payload.get("author") != viewer:
+                    payload.pop("content", None)
+                    payload["content_redacted"] = True
+                events.append({
+                    "event_id": row["event_id"],
+                    "event_type": row["event_type"],
+                    "task_id": row["task_id"],
+                    "actor": row["actor"],
+                    "payload": payload,
+                    "occurred_at": row["occurred_at"],
+                    "previous_hash": row["previous_hash"],
+                    "event_hash": row["event_hash"],
+                })
+            return {
+                "task": task,
+                "positions": positions,
+                "decisions": decisions,
+                "approvals": approvals,
+                "artifacts": artifacts,
+                "events": events,
+                "provenance": {
+                    "agent_connections": "not_connected",
+                    "position_submission": "manual_user_relay",
+                    "independent_analysis": "depends_on_separate_sessions_and_no_cross_sharing_before_reveal",
+                },
+            }
+
+    def verify_event_chain(self) -> dict[str, Any]:
+        with self._connection() as db:
+            rows = db.execute("SELECT * FROM events ORDER BY event_id").fetchall()
+            previous_hash = "0" * 64
+            for row in rows:
+                if row["previous_hash"] != previous_hash:
+                    return {"valid": False, "event_id": row["event_id"], "reason": "previous_hash_mismatch"}
+                canonical = _json({
+                    "event_type": row["event_type"],
+                    "task_id": row["task_id"],
+                    "actor": row["actor"],
+                    "payload_json": row["payload_json"],
+                    "occurred_at": row["occurred_at"],
+                    "previous_hash": row["previous_hash"],
+                })
+                expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+                if row["event_hash"] != expected:
+                    return {"valid": False, "event_id": row["event_id"], "reason": "event_hash_mismatch"}
+                previous_hash = row["event_hash"]
+            return {"valid": True, "events_checked": len(rows), "head_hash": previous_hash}
+
+    def markdown_export(self, task_id: str, viewer: str = "human") -> str:
+        data = self.export_timeline(task_id, viewer=viewer)
+        task = data["task"]
+        lines = [f"# {task['objective']}", "", f"- Task: `{task['task_id']}`", f"- Mode: `{task['mode']}`", f"- Status: `{task['status']}`", "", "## Acceptance criteria"]
+        lines.extend(f"- {item}" for item in task["acceptance_criteria"])
+        lines += ["", "## Positions"]
+        for position in data["positions"]:
+            lines.append(f"### {position['author']} — `{position['position_id']}`")
+            lines.append(position.get("content", "[sealed until reveal]"))
+            lines.append("")
+        lines.append("## Decisions")
+        for decision in data["decisions"]:
+            lines += [f"### {decision['choice']}", decision["rationale"], f"- Status: `{decision['status']}`", f"- Supporting: {', '.join(decision['supporting_position_ids']) or 'none'}", f"- Considered but not chosen: {', '.join(decision['considered_not_chosen_position_ids']) or 'none'}", ""]
+        lines.append("## Approvals")
+        for approval in data["approvals"]:
+            lines.append(f"- {approval['action']} by {approval['actor']}: {approval['note']}")
+        lines += ["", "## Artifacts"]
+        for artifact in data["artifacts"]:
+            lines.append(f"- {artifact['kind']}: {artifact['uri']} (SHA-256: {artifact['sha256'] or 'not supplied'})")
+        lines += ["", "## Provenance", f"- Agent connections: `{data['provenance']['agent_connections']}`", f"- Position submission: `{data['provenance']['position_submission']}`", f"- Independence: `{data['provenance']['independent_analysis']}`", ""]
+        return "\n".join(lines)
