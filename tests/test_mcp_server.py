@@ -113,7 +113,8 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                     target="production",
                     scope="release 1.0",
                 )
-                async with Client(owner_server_with_errors) as approved_owner:
+                approved_owner_server = build_mcp_server(database, credentials["owner_token"])
+                async with Client(approved_owner_server) as approved_owner:
                     allowed = await approved_owner.call_tool("action_authorize", action_args)
                     self.assertFalse(allowed.is_error)
                     self.assertTrue(allowed.structured_content["authorized"])
