@@ -22,7 +22,7 @@ Each task records one accountable owner and any contributors/reviewers. The owne
 
 ## Independent position protocol
 
-For architecture, strategy, security, high-impact, or otherwise consequential decisions, use \`independent\` mode when meaningful independent analysis is needed:
+For architecture, strategy, security, high-impact, or otherwise consequential decisions, use `independent` mode when meaningful independent analysis is needed:
 
 1. Define objective, constraints, acceptance criteria, required authors, and a submission deadline/manual close rule.
 2. Collect initial positions without cross-sharing their contents.
@@ -30,7 +30,7 @@ For architecture, strategy, security, high-impact, or otherwise consequential de
 4. Reveal only after all required authors submit or the human explicitly closes collection.
 5. Record overlaps, disagreements, supporting positions, and considered-but-not-chosen positions.
 
-Use \`open\` mode for routine work where the independence benefit does not justify the ceremony. Independent analysis is real only when participants use separate sessions and do not see one another's drafts before submission. Until provider adapters and authenticated identity exist, submissions are manual relays; never claim that an author label proves an external model submitted the content.
+Use `open` mode for routine work where the independence benefit does not justify the ceremony. Independent analysis is real only when participants use separate sessions and do not see one another's drafts before submission. Until provider adapters and authenticated identity exist, submissions are manual relays; never claim that an author label proves an external model submitted the content.
 
 ## Directive and execution contract
 
