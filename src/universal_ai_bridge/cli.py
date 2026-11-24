@@ -33,6 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
     reveal = task_commands.add_parser("reveal")
     reveal.add_argument("task_id")
 
+    participant = commands.add_parser("participant", help="issue a task-scoped participant credential")
+    participant_commands = participant.add_subparsers(dest="participant_command", required=True)
+    issue = participant_commands.add_parser("issue")
+    issue.add_argument("task_id")
+    issue.add_argument("--name", required=True)
+
     position = commands.add_parser("position", help="submit a manually relayed position")
     position_commands = position.add_subparsers(dest="position_command", required=True)
     submit = position_commands.add_parser("submit")
@@ -104,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
                 _print(service.close_collection(args.task_id, note=args.note))
             elif args.task_command == "reveal":
                 _print(service.reveal(args.task_id))
+        elif args.command == "participant":
+            _print(service.issue_participant(args.task_id, args.name))
         elif args.command == "position":
             if args.position_command == "submit":
                 _print(service.submit_position(args.task_id, args.author, args.content))
