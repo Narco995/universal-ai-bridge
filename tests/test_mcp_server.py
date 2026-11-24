@@ -31,7 +31,7 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
 
             async with (
                 Client(claude_server) as claude,
-                Client(gpt_server) as gpt,
+                Client(gpt_server, raise_exceptions=False) as gpt,
                 Client(owner_server) as owner,
             ):
                 listing = await claude.list_tools()
