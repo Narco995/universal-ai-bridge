@@ -8,8 +8,9 @@ import sqlite3
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, ClassVar
 
 
 class BridgeError(Exception):
@@ -51,7 +52,7 @@ def _id(prefix: str) -> str:
 class BridgeService:
     """SQLite-backed workflow. All transports should call this service."""
 
-    TERMINAL_VISIBLE_STATES = {"revealed", "decided", "awaiting_approval", "approved", "rejected", "changes_requested", "implemented"}
+    TERMINAL_VISIBLE_STATES: ClassVar[frozenset[str]] = frozenset({"revealed", "decided", "awaiting_approval", "approved", "rejected", "changes_requested", "implemented"})
     def __init__(self, database: str | Path = "bridge.sqlite3") -> None:
         raw_database = str(database)
         if raw_database == ":memory:":
@@ -263,9 +264,9 @@ class BridgeService:
         actor: str = "human",
     ) -> dict[str, Any]:
         if not isinstance(objective, str):
-            raise ValueError("objective must be a string")
+            raise TypeError("objective must be a string")
         if not isinstance(actor, str) or not actor.strip():
-            raise ValueError("actor must be a non-empty string")
+            raise TypeError("actor must be a non-empty string")
         objective = objective.strip()
         criteria_input = self._string_list(acceptance_criteria, "acceptance_criteria")
         authors_input = self._string_list(required_authors, "required_authors")
@@ -394,7 +395,7 @@ class BridgeService:
 
     def submit_position(self, task_id: str, author: str, content: str, actor: str = "human") -> dict[str, Any]:
         if not isinstance(author, str) or not isinstance(content, str):
-            raise ValueError("author and content must be strings")
+            raise TypeError("author and content must be strings")
         author, content = author.strip(), content.strip()
         if not author or not content:
             raise ValueError("author and content are required")
@@ -454,7 +455,7 @@ class BridgeService:
 
     def close_collection(self, task_id: str, actor: str = "human", note: str = "manual close") -> dict[str, Any]:
         if not isinstance(note, str):
-            raise ValueError("collection close note must be a string")
+            raise TypeError("collection close note must be a string")
         with self._transaction() as db:
             task = self._task_row(db, task_id)
             if task["status"] != "collecting":
@@ -488,9 +489,9 @@ class BridgeService:
         actor: str = "human",
     ) -> dict[str, Any]:
         if not isinstance(choice, str) or not isinstance(rationale, str):
-            raise ValueError("choice and rationale must be strings")
+            raise TypeError("choice and rationale must be strings")
         if not isinstance(requires_approval, bool):
-            raise ValueError("requires_approval must be a boolean")
+            raise TypeError("requires_approval must be a boolean")
         choice, rationale = choice.strip(), rationale.strip()
         if not choice or not rationale:
             raise ValueError("choice and rationale are required")
@@ -715,7 +716,7 @@ class BridgeService:
         actor: str = "human",
     ) -> dict[str, Any]:
         if not isinstance(kind, str) or not isinstance(uri, str):
-            raise ValueError("artifact kind and uri must be strings")
+            raise TypeError("artifact kind and uri must be strings")
         kind, uri = kind.strip(), uri.strip()
         if not kind or not uri:
             raise ValueError("artifact kind and uri are required")
