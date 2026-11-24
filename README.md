@@ -74,9 +74,9 @@ A collection becomes ready automatically when every required author has submitte
 
 ## MCP stdio and per-agent identity
 
-Install the project with `python -m pip install -e .`, then configure an MCP host to launch `uab-mcp` as a stdio subprocess. Every model gets its own process, the same absolute `UAB_DATABASE` path, and only its own task-scoped `UAB_TOKEN`. The human owner uses the owner token. Participant processes cannot reveal positions, approve actions, or mint new owner credentials.
+Install the project with `python -m pip install -e .`, then configure an MCP host to launch `uab-mcp` as a stdio subprocess. Every model gets its own process, the same absolute `UAB_DATABASE` path, and only its own task-scoped `UAB_TOKEN`. The human owner uses the owner token. Participant processes cannot reveal positions or approve actions.
 
-A no-token bootstrap process can create a task and return one-time credentials; once configured with a token, `task_create` is not exposed. The MCP server exposes task, participant, position, reveal, decision, approval, artifact, timeline, and integrity tools. It uses the official MCP SDK and shares the same application core as CLI and HTTP.
+Create tasks, issue participant credentials, close incomplete collections, and record human approvals through the trusted CLI or loopback HTTP API. Those credential and approval operations are deliberately **not exposed as model-callable MCP tools**. The MCP server exposes health, task read, position submit/list, ready-only reveal, decision record, action authorization, artifact attach, timeline export, and event/projection verification. The authorization tool cannot pass without a separate human approval created outside the MCP tool surface.
 
 The MCP server is stdio-only in this milestone. There is no remote Streamable HTTP MCP endpoint or OAuth integration yet, and the Bridge does not call provider APIs directly. Full per-agent setup is in the [MCP transport guide](docs/MCP_TRANSPORT_V0.md).
 
