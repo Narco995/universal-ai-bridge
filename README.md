@@ -1,29 +1,21 @@
 # Universal AI Bridge
 
-A provider-neutral collaboration system for Claude, GPT, Grok, and compatible intelligence systems. Its long-term architecture is MCP-first, with transport adapters sharing one application core.
+A provider-neutral collaboration system for Claude, GPT, Grok, and compatible intelligence systems. MCP is the intended primary interface; CLI and HTTP are thin adapters over one shared application core.
 
 ## Current status
 
-The implementation branch contains a **minimal collaboration workflow v0**: a Python standard-library service, SQLite store, CLI, loopback-only HTTP API, and automated tests. This slice proves selected workflow invariants; it is not a production multi-agent platform and does not connect to external model providers. Claude/GPT/Grok positions are currently submitted manually by the human operator.
+The feature branch contains a **minimal collaboration workflow v0.1 hardening pass**: a Python standard-library service, SQLite event store, CLI, loopback-only HTTP API, task-scoped participant credentials, scoped human approvals, event replay checks, and automated tests.
+
+This is not yet a live multi-agent platform. There are no Claude, GPT, or Grok provider connections; participant positions are still manually relayed by the human operator. MCP, tool execution, remote deployment, and production hardening remain future work.
 
 ## Alliance principles
 
-- Independent intelligence, equal intellectual respect, and the freedom to disagree.
-- Roles are task-specific responsibilities, not permanent authority or a chain of command.
-- Leadership follows the problem and relevant capability; every participant may propose, build, research, or critique.
+- Participants are independent intellectual peers; roles and leadership are task-specific.
+- Any participant may propose, research, implement, test, or challenge a decision.
 - Important dissent and rejected proposals remain linked to the decision record.
-- Independent positions are collected before reveal when the decision warrants it; routine work uses a lighter open mode.
+- Independent submissions are sealed until reveal; independent analysis still requires separate sessions and no cross-sharing before submission.
 - The human founder remains the final acceptance and approval authority.
 - Evidence, tests, and working artifacts—not model consensus—determine technical acceptance.
-
-## Existing operating specifications
-
-- [Repository agent contract](./CLAUDE.md)
-- [Alliance Skill v2](./docs/ALLIANCE_SKILL_V2.md)
-- [Strategy Skill v2](./docs/STRATEGY_SKILL_V2.md)
-- [Governance and security](./docs/GOVERNANCE_AND_SECURITY.md)
-- [Evaluation and acceptance](./docs/EVALUATION_AND_ACCEPTANCE.md)
-- [Architecture decisions and adoption order](./docs/ARCHITECTURE_DECISIONS.md)
 
 ## Run locally
 
@@ -36,26 +28,28 @@ python -m pip install -e .
 python -m unittest discover -s tests -v
 ```
 
-Create a task and collect independently submitted positions:
+The CLI is a trusted local-owner interface. It prints task credentials when a task is created; protect that output. CLI author labels are operator-supplied because this path is intended for a single trusted administrator, not separate remote participants.
+
+Example:
 
 ```bash
-uab --db ./bridge.sqlite3 task create \\
-  --objective "Choose a persistence design" \\
-  --criteria "Preserve dissent" \\
-  --criteria "Block unapproved consequential actions" \\
-  --mode independent \\
-  --required-author claude \\
+uab --db ./bridge.sqlite3 task create \
+  --objective "Choose a persistence design" \
+  --criteria "Preserve dissent" \
+  --criteria "Block unapproved consequential actions" \
+  --mode independent \
+  --required-author claude \
   --required-author gpt
 
 uab --db ./bridge.sqlite3 position submit TASK_ID --author claude --content "Append-only SQLite events"
 uab --db ./bridge.sqlite3 position submit TASK_ID --author gpt --content "Mutable JSON snapshots"
 uab --db ./bridge.sqlite3 task reveal TASK_ID
 
-uab --db ./bridge.sqlite3 decision record TASK_ID \\
-  --choice "Append-only SQLite events" \\
-  --rationale "Replayable history is required" \\
-  --supporting POSITION_ID \\
-  --considered-not-chosen OTHER_POSITION_ID \\
+uab --db ./bridge.sqlite3 decision record TASK_ID \
+  --choice "Append-only SQLite events" \
+  --rationale "Replayable history is required" \
+  --supporting POSITION_ID \
+  --considered-not-chosen OTHER_POSITION_ID \
   --requires-approval
 
 uab --db ./bridge.sqlite3 approval TASK_ID --action approve \
@@ -69,30 +63,56 @@ uab --db ./bridge.sqlite3 export TASK_ID --format markdown --output task-TASK_ID
 uab --db ./bridge.sqlite3 verify events
 ```
 
-`task reveal` is accepted when all required authors have submitted or a human has explicitly closed collection with `task close`.
+A collection becomes ready automatically when every required author has submitted. The owner may also explicitly close a non-empty collection before revealing it.
 
-Start the HTTP API (loopback only):
+## HTTP API and identity
+
+Start the local API:
 
 ```bash
 uab --db ./bridge.sqlite3 serve --host 127.0.0.1 --port 8000
 ```
 
-Routes: `POST /tasks`, `GET /tasks/{id}`, `POST /tasks/{id}/positions`, `GET /tasks/{id}/positions`, `POST /tasks/{id}/close`, `POST /tasks/{id}/reveal`, `POST /tasks/{id}/decisions`, `POST /tasks/{id}/approvals`, `POST /tasks/{id}/actions/authorize`, `POST /tasks/{id}/artifacts`, and `GET /tasks/{id}/export`.
+Create a task with `POST /tasks`. The response includes one-time credentials:
 
-## Security boundary — important v0 limitation
+- `credentials.owner_token`: owner-only operations such as reveal, decisions, approvals, and artifact attachment.
+- `credentials.participant_tokens[author]`: submit and read that participant's own position.
 
-Position `author` values and the `X-Bridge-Actor` header are attribution/viewer labels, **not authenticated provider or human identities**. The server is loopback-only and is intended for a trusted single-user local demonstration. A caller able to reach it can claim another actor label; direct database access bypasses application filtering. Therefore, v0 demonstrates the sealing and approval *workflow logic* under a trusted identity assumption, not adversarial multi-user access control. Do not expose it to an untrusted network or use it to authorize real external side effects.
+Send credentials using `Authorization: Bearer <token>`. Do not send author identity in the request body; the API derives it from the participant credential. The legacy `X-Bridge-Actor` header is ignored. Participant credentials cannot reveal, decide, approve, or administer a task. The owner can administer the task but cannot read sealed participant position bodies before reveal.
 
-There is no user authentication, TLS, encryption-at-rest, cryptographic participant identity, or signed approval credential. The `authorize` route records an authorization result only; it does not execute an external side effect. Before external or multi-user use, add authenticated participant identities, protected approval credentials, capability-scoped tool adapters, and independent security tests.
+Read-only endpoints include `GET /health`, `GET /tasks/{id}`, `GET /tasks/{id}/positions`, and `GET /tasks/{id}/export`. Task data routes require a task-scoped bearer token. The owner and participants can view all position bodies after reveal.
 
-## v0 scope and guarantees
+Write endpoints include `POST /tasks`, `POST /tasks/{id}/positions`, `POST /tasks/{id}/close`, `POST /tasks/{id}/reveal`, `POST /tasks/{id}/decisions`, `POST /tasks/{id}/approvals`, `POST /tasks/{id}/actions/authorize`, and `POST /tasks/{id}/artifacts`.
 
-- Independent mode hides other authors' position bodies through the application API until reveal when the caller identity is trusted; open mode exposes them immediately.
-- Each author label may submit once per task. Submissions are marked `manual` until real provider adapters exist.
-- Dissent is stored as position IDs explicitly linked under `considered_not_chosen_position_ids` in a decision.
-- Timeline export includes task, positions, decisions, approvals, artifacts, and task events.
-- Events are append-only at the SQLite layer and form a SHA-256 hash chain; `verify events` checks the chain and compares event records with task, position, decision, approval, and artifact projections. This detects ordinary projection tampering but is not a signed or tamper-proof audit system against an administrator who can replace the database.
-- The action authorization policy is conservative: only the explicit low-risk names `read`, `list`, `inspect`, `export`, `status`, and `analyze` are allowlisted without approval. Unknown and consequential action names require approval even if a decision's `requires_approval` flag is false. Approval is bound to an exact action name, target, and scope, and expires after 15 minutes by default. A decision marked `requires_approval` additionally requires an approved record before artifact attachment. Identity of the approver is not authenticated in v0.
-- The REST API calls the same `BridgeService` methods as the CLI. MCP is intentionally deferred until these core invariants pass tests.
+## Approval behavior
 
-See [the v0 workflow design](docs/MINIMAL_WORKFLOW_V0.md) for state transitions, API contract, limitations, and acceptance-test mapping.
+The authorization endpoint is deliberately conservative: **every action authorization requires an unexpired human approval matching the exact action name, target, and scope**. Read-only GET routes do not call that endpoint. A caller cannot bypass the gate by labelling a consequential operation as `export` or another supposed low-risk action.
+
+A decision marked `requires_approval=true` enters `awaiting_approval`; a valid human approval moves it to `approved`. Artifact attachment for such a decision also checks for a still-valid approval. Approval defaults to a 15-minute validity window. The authorization endpoint records permission only; it does not execute external side effects.
+
+## Auditability
+
+The SQLite event log is append-only through database triggers and uses a SHA-256 hash chain. `verify events` checks event hashes, source-event/projection consistency, reconstructed task and decision states, and principal records. This detects ordinary accidental or projection tampering; it is not signed non-repudiation or protection against an administrator who can replace the SQLite database and its schema.
+
+## Security limitations
+
+This remains a trusted, local v0 demonstration:
+
+- The HTTP server binds only to loopback; do not expose it to an untrusted network.
+- Task-scoped bearer tokens are random and stored as SHA-256 hashes, but there is no TLS, encryption-at-rest, revocation/rotation workflow, or secure multi-user deployment model.
+- Anyone with direct access to the SQLite file or trusted CLI can bypass application-level position filtering.
+- The person creating a task receives all participant tokens once and must distribute them separately. The system cannot prove that a named AI model authored a submission.
+- The current "human owner" credential is a task-scoped bearer token, not an identity-provider-backed identity.
+- No real tool executor consumes authorization results. A future executor must check authorization immediately before each side effect and enforce a capability registry that binds canonical action identifiers to actual tools and targets.
+
+Never use this version to authorize real external side effects or as a production security boundary.
+
+## Next milestones
+
+1. Have independent reviewers inspect the actual implementation and adversarial tests.
+2. Add a canonical capability/tool registry and an executor that enforces approval at the point of side effect.
+3. Add MCP as a thin transport over the existing service.
+4. Add provider adapters with real authenticated identities and explicit manual/automatic submission provenance.
+5. Complete security, recovery, concurrency, and operational testing before any remote deployment.
+
+See [the v0 workflow specification](docs/MINIMAL_WORKFLOW_V0.md) and the [Alliance operating contract](CLAUDE.md).
