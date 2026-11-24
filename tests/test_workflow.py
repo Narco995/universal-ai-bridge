@@ -40,6 +40,7 @@ class BridgeWorkflowTests(unittest.TestCase):
         self.assertEqual(auto_task["mode"], "independent")
         self.assertEqual(auto_task["execution_mode"], "auto")
         self.assertEqual(self.service.get_task(auto_task["task_id"])["execution_mode"], "auto")
+        self.assertIn("Execution mode: `auto`", self.service.markdown_export(auto_task["task_id"]))
         self.assertTrue(self.service.verify_event_chain()["valid"])
 
         manual_task = self.service.create_task(
