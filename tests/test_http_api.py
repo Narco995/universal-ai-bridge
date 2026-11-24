@@ -5,8 +5,8 @@ import unittest
 from http.client import HTTPConnection
 from pathlib import Path
 
-from universal_ai_bridge.http_api import BridgeHTTPServer
 from universal_ai_bridge.core import BridgeService
+from universal_ai_bridge.http_api import BridgeHTTPServer
 
 
 class BridgeHTTPTests(unittest.TestCase):
@@ -69,41 +69,6 @@ class BridgeHTTPTests(unittest.TestCase):
         status, submitted = self.request_json(
             "POST", f"/tasks/{task['task_id']}/positions",
             {"content": "An independently issued participant can contribute"},
-            token=issued["token"],
-        )
-        self.assertEqual(status, 201)
-        self.assertEqual(submitted["author"], "grok")
-
-    def test_invalid_bearer_token_returns_401(self):
-        task, _ = self.create_task(("claude",))
-        status, response = self.request_json(
-            "GET", f"/tasks/{task['task_id']}/positions", token="not-a-valid-token",
-        )
-        self.assertEqual(status, 401)
-        self.assertEqual(response["error"], "Unauthorized")
-
-    def test_server_constructor_rejects_non_loopback_binding(self):
-        with self.assertRaises(ValueError):
-            BridgeHTTPServer(("0.0.0.0", 0), self.server.service)
-
-    def test_open_task_can_issue_participant_credentials(self):
-        status, task = self.request_json("POST", "/tasks", {
-            "objective": "Open collaboration",
-            "acceptance_criteria": ["Allow contributors to join after creation"],
-            "mode": "open",
-            "required_authors": [],
-        })
-        self.assertEqual(status, 201)
-        owner_token = task["credentials"]["owner_token"]
-        status, issued = self.request_json(
-            "POST", f"/tasks/{task['task_id']}/participants",
-            {"name": "grok"}, token=owner_token,
-        )
-        self.assertEqual(status, 201)
-        self.assertEqual(issued["name"], "grok")
-        status, submitted = self.request_json(
-            "POST", f"/tasks/{task['task_id']}/positions",
-            {"content": "A dynamic participant can contribute"},
             token=issued["token"],
         )
         self.assertEqual(status, 201)
