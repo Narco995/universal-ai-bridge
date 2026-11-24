@@ -6,7 +6,7 @@
 
 **Rationale:** Avoid divergent behavior and duplicated policy enforcement.
 
-**Consequence:** Workflow state, authorization, and domain logic belong in the shared core. The v0 CLI and HTTP API already share \`BridgeService\`; MCP is deferred until core invariants pass tests.
+**Consequence:** Workflow state, authorization, and domain logic belong in the shared core. The v0 CLI and HTTP API already share `BridgeService`; MCP is deferred until core invariants pass tests.
 
 ## ADR-002: Peer collaboration, dynamic task leadership
 
