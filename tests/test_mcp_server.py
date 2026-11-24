@@ -49,6 +49,7 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("decision_record", owner_names)
                 self.assertIn("action_authorize", owner_names)
                 self.assertIn("event_chain_verify", owner_names)
+                self.assertNotIn("artifact_verify", owner_names)
                 self.assertNotIn("position_submit", owner_names)
                 for human_only_tool in ("task_create", "participant_issue", "collection_close", "approval_record"):
                     self.assertNotIn(human_only_tool, owner_names)
@@ -108,6 +109,18 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                     },
                 )
                 self.assertFalse(decision.is_error)
+                attached = await owner.call_tool(
+                    "artifact_attach",
+                    {
+                        "task_id": task_id,
+                        "kind": "commit",
+                        "uri": "https://example.invalid/commit/mcp-submitted",
+                    },
+                )
+                self.assertFalse(attached.is_error)
+                self.assertEqual(attached.structured_content["verification_status"], "pending")
+                self.assertEqual(service.get_task(task_id)["status"], "decided")
+
                 action_args = {
                     "task_id": task_id,
                     "action_name": "deploy",
@@ -134,6 +147,12 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                     allowed = await approved_owner.call_tool("action_authorize", action_args)
                     self.assertFalse(allowed.is_error)
                     self.assertTrue(allowed.structured_content["authorized"])
+
+                service.verify_artifact(
+                    task_id, attached.structured_content["artifact_id"],
+                    "Human inspected the commit and accepted the attached implementation evidence",
+                )
+                self.assertEqual(service.get_task(task_id)["status"], "implemented")
 
                 integrity = await owner.call_tool("event_chain_verify", {"task_id": task_id})
                 self.assertFalse(integrity.is_error)

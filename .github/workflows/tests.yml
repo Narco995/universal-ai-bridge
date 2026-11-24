@@ -37,4 +37,5 @@ jobs:
           uab --help
           uab participant issue --help
           uab task create --help
+          uab artifact verify --help
           uab-mcp --help

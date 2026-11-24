@@ -247,6 +247,45 @@ class BridgeHTTPTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(response["authorized"])
 
+    def test_http_artifact_attachment_requires_separate_human_verification(self):
+        task, credentials = self.create_task(("claude",))
+        task_id = task["task_id"]
+        owner_token = credentials["owner_token"]
+        participant_token = credentials["participant_tokens"]["claude"]
+        status, _ = self.request_json(
+            "POST", f"/tasks/{task_id}/positions",
+            {"content": "Implementation proposal"}, token=participant_token,
+        )
+        self.assertEqual(status, 201)
+        status, _ = self.request_json("POST", f"/tasks/{task_id}/reveal", token=owner_token)
+        self.assertEqual(status, 200)
+        status, _ = self.request_json(
+            "POST", f"/tasks/{task_id}/decisions",
+            {"choice": "Option A", "rationale": "Meets acceptance criteria"},
+            token=owner_token,
+        )
+        self.assertEqual(status, 201)
+        status, artifact = self.request_json(
+            "POST", f"/tasks/{task_id}/artifacts",
+            {"kind": "test_run", "uri": "https://example.invalid/actions/runs/456"},
+            token=owner_token,
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(artifact["verification_status"], "pending")
+        status, current_task = self.request_json("GET", f"/tasks/{task_id}", token=owner_token)
+        self.assertEqual(status, 200)
+        self.assertEqual(current_task["status"], "decided")
+        status, verified = self.request_json(
+            "POST", f"/tasks/{task_id}/artifacts/{artifact['artifact_id']}/verify",
+            {"note": "Human inspected the CI run and accepted the evidence"},
+            token=owner_token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(verified["verification_status"], "verified")
+        status, current_task = self.request_json("GET", f"/tasks/{task_id}", token=owner_token)
+        self.assertEqual(status, 200)
+        self.assertEqual(current_task["status"], "implemented")
+
     def test_http_decision_approval_gate_blocks_until_approved(self):
         task, credentials = self.create_task(("claude",))
         task_id = task["task_id"]

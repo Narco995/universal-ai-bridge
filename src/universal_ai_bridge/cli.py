@@ -75,11 +75,17 @@ def build_parser() -> argparse.ArgumentParser:
     action.add_argument("--target", required=True)
     action.add_argument("--scope", required=True)
 
-    artifact = commands.add_parser("artifact", help="attach an implementation artifact pointer")
-    artifact.add_argument("task_id")
-    artifact.add_argument("--kind", required=True, help="e.g. commit, pull_request, test_run, file")
-    artifact.add_argument("--uri", required=True)
-    artifact.add_argument("--sha256")
+    artifact = commands.add_parser("artifact", help="attach or verify implementation evidence")
+    artifact_commands = artifact.add_subparsers(dest="artifact_command", required=True)
+    add_artifact = artifact_commands.add_parser("add", help="attach an unverified artifact pointer")
+    add_artifact.add_argument("task_id")
+    add_artifact.add_argument("--kind", required=True, help="e.g. commit, pull_request, test_run, file")
+    add_artifact.add_argument("--uri", required=True)
+    add_artifact.add_argument("--sha256")
+    verify_artifact = artifact_commands.add_parser("verify", help="human-verify an attached artifact")
+    verify_artifact.add_argument("task_id")
+    verify_artifact.add_argument("artifact_id")
+    verify_artifact.add_argument("--note", required=True, help="what evidence was inspected and accepted")
 
     export = commands.add_parser("export", help="export the complete task record")
     export.add_argument("task_id")
@@ -134,7 +140,10 @@ def main(argv: list[str] | None = None) -> int:
                 args.task_id, args.name, target=args.target, scope=args.scope,
             ))
         elif args.command == "artifact":
-            _print(service.attach_artifact(args.task_id, args.kind, args.uri, args.sha256))
+            if args.artifact_command == "add":
+                _print(service.attach_artifact(args.task_id, args.kind, args.uri, args.sha256))
+            else:
+                _print(service.verify_artifact(args.task_id, args.artifact_id, args.note))
         elif args.command == "export":
             if args.format == "markdown":
                 output = service.markdown_export(args.task_id, args.viewer)

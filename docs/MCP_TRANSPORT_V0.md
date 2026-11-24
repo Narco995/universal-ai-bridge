@@ -9,7 +9,7 @@ The initial MCP transport is **stdio only**. Each MCP host launches one Bridge p
 The process identity is resolved at startup from the bearer token and task-scoped principal record. The MCP tool catalog is filtered by role:
 
 - A participant process receives submit and read tools for its own task.
-- The owner process receives reveal, decision, action-authorization, artifact and integrity tools.
+- The owner process receives reveal, decision, action-authorization, artifact-attachment and integrity tools. Artifact verification remains a human-only operation through the trusted CLI or owner HTTP path.
 - An unconfigured process exposes health only.
 
 The caller cannot pass an author label or choose a different task. Tool calls are bound to the task associated with the process token.
@@ -86,10 +86,10 @@ The host launches the server as a subprocess. MCP protocol messages use stdin/st
 | `positions_reveal` | No | Yes | Reveal positions once collection is ready |
 | `decision_record` | No | Yes | Record a decision and link supporting/dissenting positions |
 | `action_authorize` | No | Yes | Check an exact, unexpired approval; does not execute |
-| `artifact_attach` | No | Yes | Attach a pointer to an implementation artifact |
+| `artifact_attach` | No | Yes | Attach a pending pointer to implementation evidence |
 | `event_chain_verify` | No | Yes | Verify event hashes and reconstructed state |
 
-The following are intentionally **not exposed as model-callable MCP tools**: task creation, participant credential issuance, manual collection close, and approval recording. Use the trusted CLI or owner HTTP API for these operations.
+The following are intentionally **not exposed as model-callable MCP tools**: task creation, participant credential issuance, manual collection close, approval recording, and artifact verification. Use the trusted CLI or owner HTTP API for these operations.
 
 A participant can read its own sealed position before reveal. The owner can administer the task but does not see participant bodies until reveal. After reveal, all task principals can read all positions. Open mode is intentionally visible without a reveal step.
 
@@ -97,7 +97,7 @@ A participant can read its own sealed position before reveal. The owner can admi
 
 A decision marked `requires_approval=true` needs a separate `decision_acceptance` approval bound to its task ID and decision ID. A consequential action then needs its own exact approval matching action name, target and scope. Both approvals must remain unexpired. Approval recording is performed by the human through CLI/HTTP, not by an MCP tool.
 
-The MCP `action_authorize` tool records a permission check only. It does not execute a side effect. A future executor must call the authorization guard immediately before executing the real action and enforce canonical tool/capability identities.
+The MCP `action_authorize` tool records a permission check only. It does not execute a side effect. The MCP `artifact_attach` tool records a pending pointer but cannot mark work implemented; the human owner must separately inspect and verify the evidence. A future executor must call the authorization guard immediately before executing the real action and enforce canonical tool/capability identities.
 
 ## Security limits
 
@@ -113,4 +113,4 @@ Do not use this version as a production security boundary or to authorize real-w
 
 ## Verification
 
-Automated tests cover role-filtered tool discovery, multiple participant processes sharing state, sealed-position visibility before reveal, owner-only operations, blocked authorization without human approval, and a real stdio subprocess handshake.
+Automated tests cover role-filtered tool discovery, multiple participant processes sharing state, sealed-position visibility before reveal, owner-only operations, blocked authorization without human approval, artifact attachment without model-side completion, human-only artifact verification, and a real stdio subprocess handshake.

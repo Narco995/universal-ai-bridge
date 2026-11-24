@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -105,10 +106,18 @@ class BridgeWorkflowTests(unittest.TestCase):
             action_name=action, target=target, scope=scope,
         )
         self.service.authorize_action(self.task_id, action, target=target, scope=scope)
-        self.service.attach_artifact(self.task_id, "commit", "https://example.invalid/commit/abc", "a" * 64)
+        artifact = self.service.attach_artifact(
+            self.task_id, "commit", "https://example.invalid/commit/abc", "a" * 64
+        )
+        self.assertEqual(artifact["verification_status"], "pending")
+        self.assertEqual(self.service.get_task(self.task_id)["status"], "approved")
+        self.service.verify_artifact(
+            self.task_id, artifact["artifact_id"],
+            "Inspected the commit diff and passing CI run for the approved change",
+        )
         exported = self.service.export_timeline(self.task_id)
         types = [event["event_type"] for event in exported["events"]]
-        for expected in ["task_created", "position_submitted", "positions_revealed", "decision_recorded", "approval_recorded", "action_authorized", "artifact_attached"]:
+        for expected in ["task_created", "position_submitted", "positions_revealed", "decision_recorded", "approval_recorded", "action_authorized", "artifact_attached", "artifact_verified"]:
             self.assertIn(expected, types)
         self.assertEqual(exported["task"]["status"], "implemented")
         self.assertEqual(exported["approvals"][0]["action"], "approve")
@@ -370,6 +379,58 @@ class BridgeWorkflowTests(unittest.TestCase):
                 self.task_id, "A", "Bad flag", requires_approval="false"
             )
 
+    def test_artifact_pointer_does_not_complete_task_until_human_verifies(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        self.service.record_decision(self.task_id, "A", "Selected against the acceptance criteria")
+        artifact = self.service.attach_artifact(
+            self.task_id, "test_run", "https://example.invalid/actions/runs/123"
+        )
+        self.assertEqual(artifact["verification_status"], "pending")
+        self.assertEqual(self.service.get_task(self.task_id)["status"], "decided")
+        with self.assertRaises(Forbidden):
+            self.service.verify_artifact(
+                self.task_id, artifact["artifact_id"], "Agent cannot approve its own evidence", actor="grok"
+            )
+        verified = self.service.verify_artifact(
+            self.task_id, artifact["artifact_id"],
+            "Reviewed the test run and confirmed all required checks passed",
+        )
+        self.assertEqual(verified["verification_status"], "verified")
+        self.assertIsNotNone(verified["verified_at"])
+        self.assertEqual(self.service.get_task(self.task_id)["status"], "implemented")
+        with self.assertRaises(Conflict):
+            self.service.verify_artifact(
+                self.task_id, artifact["artifact_id"], "Duplicate verification"
+            )
+        self.assertTrue(self.service.verify_event_chain()["valid"])
+
+    def test_artifact_verification_projection_tampering_is_detected(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        self.service.record_decision(self.task_id, "A", "Selected")
+        artifact = self.service.attach_artifact(
+            self.task_id, "commit", "https://example.invalid/commit/verified"
+        )
+        self.service.verify_artifact(
+            self.task_id, artifact["artifact_id"], "Reviewed commit and test evidence"
+        )
+        with sqlite3.connect(self.service.database) as db:
+            db.execute(
+                "UPDATE artifacts SET verification_note = 'tampered' WHERE artifact_id = ?",
+                (artifact["artifact_id"],),
+            )
+        integrity = self.service.verify_event_chain()
+        self.assertFalse(integrity["valid"])
+        self.assertEqual(integrity["reason"], "artifact_state_projection_mismatch")
+
+    def test_database_file_is_private_on_posix(self):
+        if os.name == "posix":
+            permissions = stat.S_IMODE(Path(self.service.database).stat().st_mode)
+            self.assertEqual(permissions & 0o077, 0)
+
     def test_artifact_sha256_must_be_a_hex_digest(self):
         self.service.submit_position(self.task_id, "claude", "Option A")
         self.service.submit_position(self.task_id, "gpt", "Option B")
@@ -415,6 +476,16 @@ class BridgeWorkflowTests(unittest.TestCase):
                         created_at TEXT NOT NULL
                     )"""
                 )
+                db.execute(
+                    """CREATE TABLE artifacts (
+                        artifact_id TEXT PRIMARY KEY,
+                        task_id TEXT NOT NULL,
+                        kind TEXT NOT NULL,
+                        uri TEXT NOT NULL,
+                        sha256 TEXT,
+                        created_at TEXT NOT NULL
+                    )"""
+                )
             BridgeService(database)
             with sqlite3.connect(database) as db:
                 columns = {row[1] for row in db.execute("PRAGMA table_info(approvals)")}
@@ -423,6 +494,9 @@ class BridgeWorkflowTests(unittest.TestCase):
                 task_columns = {row[1] for row in db.execute("PRAGMA table_info(tasks)")}
             self.assertIn("execution_mode", task_columns)
             self.assertEqual(BridgeService(database).get_task("legacy-task")["execution_mode"], "manual")
+            with sqlite3.connect(database) as db:
+                artifact_columns = {row[1] for row in db.execute("PRAGMA table_info(artifacts)")}
+            self.assertTrue({"verification_status", "verified_at", "verification_note"}.issubset(artifact_columns))
 
     def test_export_redacts_other_authors_before_reveal(self):
         self.service.submit_position(self.task_id, "claude", "Private initial view A")

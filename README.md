@@ -30,7 +30,7 @@ python -m pip install -e .
 python -m unittest discover -s tests -v
 ```
 
-The CLI is a trusted local-owner interface. It prints task credentials when a task is created; protect that output. CLI author labels are operator-supplied because this path is intended for a single trusted administrator, not separate remote participants.
+The CLI is a trusted local-owner interface. It prints task credentials when a task is created; protect that output. The SQLite database is created with owner-only POSIX permissions where supported. CLI author labels are operator-supplied because this path is intended for a single trusted administrator, not separate remote participants.
 
 The `--mode` flag selects collection mode (`independent` or `open`). The separate `--execution-mode` flag records an Auto/Manual policy preference (default `manual`). v0.1 persists this choice but does not yet execute actions automatically; protected actions still require human approval.
 
@@ -71,6 +71,8 @@ uab --db ./bridge.sqlite3 approval TASK_ID --action approve \
   --note "Approved this exact change"
 uab --db ./bridge.sqlite3 action TASK_ID --name "modify_shared_infrastructure" \
   --target "repository/main" --scope "change collaboration workflow"
+uab --db ./bridge.sqlite3 artifact add TASK_ID --kind commit --uri "https://github.com/example/project/commit/abc123"
+uab --db ./bridge.sqlite3 artifact verify TASK_ID ARTIFACT_ID --note "Reviewed the commit diff and passing CI run"
 uab --db ./bridge.sqlite3 export TASK_ID --format markdown --output task-TASK_ID.md
 uab --db ./bridge.sqlite3 verify events
 ```
@@ -81,7 +83,7 @@ A collection becomes ready automatically when every required author has submitte
 
 Install the project with `python -m pip install -e .`, then configure an MCP host to launch `uab-mcp` as a stdio subprocess. Every model gets its own process, the same absolute `UAB_DATABASE` path, and only its own task-scoped `UAB_TOKEN`. The human owner uses the owner token. Participant processes cannot reveal positions or approve actions.
 
-Create tasks, issue participant credentials, close incomplete collections, and record human approvals through the trusted CLI or loopback HTTP API. Those credential and approval operations are deliberately **not exposed as model-callable MCP tools**. The MCP server exposes health, task read, position submit/list, ready-only reveal, decision record, action authorization, artifact attach, timeline export, and event/projection verification. The authorization tool cannot pass without a separate human approval created outside the MCP tool surface.
+Create tasks, issue participant credentials, close incomplete collections, and record human approvals through the trusted CLI or loopback HTTP API. Those credential and approval operations are deliberately **not exposed as model-callable MCP tools**. The MCP server exposes health, task read, position submit/list, ready-only reveal, decision record, action authorization, artifact attachment, timeline export, and event/projection verification. Artifact pointers remain pending until human verification through the CLI or owner HTTP path. The authorization tool cannot pass without a separate human approval created outside the MCP tool surface.
 
 The MCP server is stdio-only in this milestone. There is no remote Streamable HTTP MCP endpoint or OAuth integration yet, and the Bridge does not call provider APIs directly. Full per-agent setup is in the [MCP transport guide](docs/MCP_TRANSPORT_V0.md).
 
@@ -102,13 +104,13 @@ Send credentials using `Authorization: Bearer <token>`. Do not send author ident
 
 Read-only endpoints include `GET /health`, `GET /tasks/{id}`, `GET /tasks/{id}/positions`, and `GET /tasks/{id}/export`. Task data routes require a task-scoped bearer token. The owner and participants can view all position bodies after reveal.
 
-Write endpoints include `POST /tasks`, owner-only `POST /tasks/{id}/participants`, `POST /tasks/{id}/positions`, `POST /tasks/{id}/close`, `POST /tasks/{id}/reveal`, `POST /tasks/{id}/decisions`, `POST /tasks/{id}/approvals`, `POST /tasks/{id}/actions/authorize`, and `POST /tasks/{id}/artifacts`.
+Write endpoints include `POST /tasks`, owner-only `POST /tasks/{id}/participants`, `POST /tasks/{id}/positions`, `POST /tasks/{id}/close`, `POST /tasks/{id}/reveal`, `POST /tasks/{id}/decisions`, `POST /tasks/{id}/approvals`, `POST /tasks/{id}/actions/authorize`, `POST /tasks/{id}/artifacts`, and owner-only `POST /tasks/{id}/artifacts/{artifact_id}/verify`.
 
 ## Approval behavior
 
 The authorization endpoint is deliberately conservative: **every action authorization requires an unexpired human approval matching the exact action name, target, and scope**. Read-only GET routes do not call that endpoint. A caller cannot bypass the gate by labelling a consequential operation as `export` or another supposed low-risk action.
 
-A decision marked `requires_approval=true` enters `awaiting_approval`. It requires a separate `decision_acceptance` approval bound to the task ID and decision ID before moving to `approved`. The specific side effect then needs its own approval bound to the exact action name, target, and scope. Artifact attachment for a decision requiring approval also checks that the decision-acceptance approval remains valid. Approval defaults to a 15-minute validity window. The authorization endpoint records permission only; it does not execute external side effects.
+A decision marked `requires_approval=true` enters `awaiting_approval`. It requires a separate `decision_acceptance` approval bound to the task ID and decision ID before moving to `approved`. The specific side effect then needs its own approval bound to the exact action name, target, and scope. Artifact attachment and human verification for a decision requiring approval both check that the decision-acceptance approval remains valid. An attached artifact remains pending until the human owner inspects and verifies it; only then does the task become `implemented`. Approval defaults to a 15-minute validity window. The authorization endpoint records permission only; it does not execute external side effects.
 
 ## Auditability
 
@@ -123,6 +125,7 @@ This remains a trusted, local v0 demonstration:
 - Anyone with direct access to the SQLite file or trusted CLI can bypass application-level position filtering.
 - The person creating a task receives tokens for required participants once and must distribute them separately. For open tasks with no predefined authors, the owner can issue participant tokens through `POST /tasks/{id}/participants` while collection remains open. The system cannot prove that a named AI model authored a submission.
 - The current "human owner" credential is a task-scoped bearer token, not an identity-provider-backed identity.
+- The SQLite file is owner-only on POSIX systems, but it is not encrypted at rest and local administrators can still access it.
 - No real tool executor consumes authorization results. A future executor must check authorization immediately before each side effect and enforce a capability registry that binds canonical action identifiers to actual tools and targets.
 
 Never use this version to authorize real external side effects or as a production security boundary.

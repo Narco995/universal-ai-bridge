@@ -179,7 +179,15 @@ Requires the owner token.
 }
 ```
 
-An artifact pointer is metadata, not proof that a deployment or external action ran. If the decision requires approval, a valid, unexpired `decision_acceptance` approval is required before attachment.
+An artifact pointer is metadata, not proof that implementation is complete. Attachment leaves its verification status as `pending` and does not move the task to `implemented`. Only the trusted human-owner path may verify an artifact:
+
+`POST /tasks/{task_id}/artifacts/{artifact_id}/verify`
+
+```json
+{"note": "Inspected the commit diff and the passing CI run"}
+```
+
+A verification note is required. Successful human verification records an immutable `artifact_verified` event and moves the task to `implemented`. The MCP owner tool catalog deliberately has no artifact-verification tool. If the decision requires approval, a valid, unexpired `decision_acceptance` approval is required both before attachment and before verification.
 
 ### Export timeline
 

@@ -189,6 +189,11 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
                         task_id, body.get("kind", ""), body.get("uri", ""), body.get("sha256"), actor=actor,
                     ))
                     return
+                if len(parts) == 5 and parts[2] == "artifacts" and parts[4] == "verify":
+                    self._send(200, service.verify_artifact(
+                        task_id, parts[3], body.get("note", ""), actor=actor,
+                    ))
+                    return
             self._send(404, {"error": "NotFound", "message": "route not found"})
         except Exception as exc:  # noqa: BLE001 - transport boundary sanitizes all uncaught failures
             self._error(exc)

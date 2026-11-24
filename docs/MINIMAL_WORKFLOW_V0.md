@@ -6,7 +6,7 @@ Prove a small collaboration workflow before adding provider integrations, automa
 
 ## State model
 
-`collecting` → `ready_to_reveal` → `revealed` → `decided` or `awaiting_approval` → `approved` / `rejected` / `changes_requested` → `implemented`.
+`collecting` → `ready_to_reveal` → `revealed` → `decided` or `awaiting_approval` → `approved` / `rejected` / `changes_requested`. Attaching an artifact leaves the task in its decision state; only human verification of implementation evidence moves it to `implemented`.
 
 A task becomes `ready_to_reveal` when every required author has submitted, or when the owner explicitly closes a non-empty collection. Reveal is rejected until then. A task in `changes_requested` may receive a superseding decision; earlier decisions and their dispositions remain in the history.
 
@@ -19,7 +19,7 @@ A task becomes `ready_to_reveal` when every required author has submitted, or wh
 - **Position:** author derived from a participant credential on HTTP; body, content hash, timestamp, and `submission_method=manual`.
 - **Decision:** chosen option, rationale, supporting position IDs, considered-not-chosen position IDs, approval requirement, status, and superseded decision link.
 - **Approval:** human owner action, exact action name, target, scope, note, and expiry.
-- **Artifact:** kind, URI, optional SHA-256, and timestamp.
+- **Artifact:** kind, URI, optional SHA-256, timestamp, and verification state (`pending` or `verified`).
 - **Event:** append-only audit record with a global hash chain.
 
 ## Identity and sealed positions
@@ -40,11 +40,11 @@ A decision marked `requires_approval=true` enters `awaiting_approval`. It requir
 
 Every call to `authorize_action` requires a separate matching, unexpired approval for the exact side effect, regardless of the caller-selected action name. The decision-acceptance approval alone cannot authorize a deployment or other side effect. There is no caller-controlled low-risk action-name allowlist. Read-only GET routes do not call `authorize_action`.
 
-A decision that requires approval also requires its valid, unexpired `decision_acceptance` approval before artifact attachment. The authorization endpoint records that a check passed; it does not execute a side effect. A future executor must use canonical tool identifiers and a capability registry, and must call the authorization guard immediately before the actual side effect.
+A decision that requires approval also requires its valid, unexpired `decision_acceptance` approval before artifact attachment and human verification. Artifact attachment is not completion: the artifact stays pending until the human owner supplies a verification note through the trusted CLI or owner HTTP path. Only the resulting `artifact_verified` event moves the task to `implemented`. The authorization endpoint records that a check passed; it does not execute a side effect. A future executor must use canonical tool identifiers and a capability registry, and must call the authorization guard immediately before the actual side effect.
 
 ## Events and reproducibility
 
-Events include task creation, principal issuance, position submission, collection close/readiness, reveal, decision, approval, action authorization, and artifact attachment. Events hash their canonical content plus the previous event hash. `verify events` checks the event chain, event-to-projection consistency, principal records, and reconstructs task/decision status from the event sequence.
+Events include task creation, principal issuance, position submission, collection close/readiness, reveal, decision, approval, action authorization, artifact attachment and human artifact verification. Events hash their canonical content plus the previous event hash. `verify events` checks the event chain, event-to-projection consistency, principal records, artifact verification state, and reconstructs task/decision status from the event sequence.
 
 This detects ordinary event or projection tampering, but is not cryptographic non-repudiation. An administrator able to replace the SQLite file and schema can rewrite the database. The system does not yet store signed checkpoints off-host.
 

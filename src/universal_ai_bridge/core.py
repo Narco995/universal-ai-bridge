@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import sqlite3
 import uuid
@@ -59,6 +60,13 @@ class BridgeService:
             raise ValueError("a persistent SQLite file path is required; :memory: is not supported across Bridge connections")
         self.database = str(Path(raw_database).expanduser().resolve())
         Path(self.database).parent.mkdir(parents=True, exist_ok=True)
+        if os.name == "posix":
+            # Positions and credential hashes are private task data.
+            fd = os.open(self.database, os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+            finally:
+                os.close(fd)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -157,7 +165,10 @@ class BridgeService:
                     kind TEXT NOT NULL,
                     uri TEXT NOT NULL,
                     sha256 TEXT,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    verification_status TEXT NOT NULL DEFAULT 'pending',
+                    verified_at TEXT,
+                    verification_note TEXT
                 );
                 CREATE TABLE IF NOT EXISTS events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -193,6 +204,28 @@ class BridgeService:
                 db.execute(
                     "ALTER TABLE tasks ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'manual' "
                     "CHECK (execution_mode IN ('auto', 'manual'))"
+                )
+            artifact_columns = {row["name"] for row in db.execute("PRAGMA table_info(artifacts)").fetchall()}
+            legacy_artifact_schema = "verification_status" not in artifact_columns
+            for column, declaration in (
+                ("verification_status", "TEXT NOT NULL DEFAULT 'pending'"),
+                ("verified_at", "TEXT"),
+                ("verification_note", "TEXT"),
+            ):
+                if column not in artifact_columns:
+                    db.execute(f"ALTER TABLE artifacts ADD COLUMN {column} {declaration}")
+            if legacy_artifact_schema:
+                # Previous v0.1 builds treated a pointer as completion. Reset
+                # that unverified projection to its actual decision disposition.
+                db.execute(
+                    """UPDATE tasks
+                       SET status = (
+                           SELECT status FROM decisions
+                           WHERE decisions.decision_id = tasks.current_decision_id
+                       )
+                       WHERE status = 'implemented'
+                         AND current_decision_id IS NOT NULL
+                         AND EXISTS (SELECT 1 FROM artifacts WHERE artifacts.task_id = tasks.task_id)"""
                 )
 
     def _append_event(
@@ -720,6 +753,7 @@ class BridgeService:
                 "executed": False,
             }
 
+
     def attach_artifact(
         self,
         task_id: str,
@@ -728,6 +762,7 @@ class BridgeService:
         sha256: str | None = None,
         actor: str = "human",
     ) -> dict[str, Any]:
+        """Record an artifact pointer without treating the pointer as verified completion."""
         if not isinstance(kind, str) or not isinstance(uri, str):
             raise TypeError("artifact kind and uri must be strings")
         kind, uri = kind.strip(), uri.strip()
@@ -757,14 +792,82 @@ class BridgeService:
             if decision["status"] in {"rejected", "changes_requested"}:
                 raise Conflict(f"current decision is {decision['status']}")
             db.execute(
-                "INSERT INTO artifacts(artifact_id, task_id, kind, uri, sha256, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                """INSERT INTO artifacts(
+                       artifact_id, task_id, kind, uri, sha256, created_at,
+                       verification_status, verified_at, verification_note
+                   ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, NULL)""",
                 (artifact_id, task_id, kind, uri, sha256, now),
             )
-            db.execute("UPDATE tasks SET status = 'implemented', updated_at = ? WHERE task_id = ?", (now, task_id))
             self._append_event(db, "artifact_attached", task_id, actor, {
                 "artifact_id": artifact_id, "kind": kind, "uri": uri, "sha256": sha256,
             })
             return dict(db.execute("SELECT * FROM artifacts WHERE artifact_id = ?", (artifact_id,)).fetchone())
+
+    def verify_artifact(
+        self,
+        task_id: str,
+        artifact_id: str,
+        note: str,
+        actor: str = "human",
+    ) -> dict[str, Any]:
+        """Human acceptance of an attached artifact; only this operation completes a task."""
+        if actor != "human":
+            raise Forbidden("only the human principal may verify implementation evidence")
+        if not isinstance(note, str) or not note.strip():
+            raise ValueError("a verification note describing the inspected evidence is required")
+        with self._transaction() as db:
+            task = self._task_row(db, task_id)
+            if not task["current_decision_id"]:
+                raise Conflict("no decision exists for this task")
+            decision = db.execute(
+                "SELECT * FROM decisions WHERE decision_id = ?",
+                (task["current_decision_id"],),
+            ).fetchone()
+            if decision["status"] in {"rejected", "changes_requested", "awaiting_approval"}:
+                raise Conflict(f"the current decision cannot be verified while {decision['status']}")
+            if decision["requires_approval"]:
+                decision_approval = db.execute(
+                    """SELECT approval_id FROM approvals
+                       WHERE decision_id = ? AND action = 'approve'
+                         AND action_name = 'decision_acceptance'
+                         AND target = ? AND scope = ? AND expires_at > ?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (decision["decision_id"], task_id, decision["decision_id"], _now()),
+                ).fetchone()
+                if decision["status"] != "approved" or decision_approval is None:
+                    raise ApprovalRequired(
+                        "a valid, unexpired decision-acceptance approval is required before verifying implementation"
+                    )
+            artifact = db.execute(
+                "SELECT * FROM artifacts WHERE artifact_id = ? AND task_id = ?",
+                (artifact_id, task_id),
+            ).fetchone()
+            if artifact is None:
+                raise NotFound(f"Artifact not found for task: {artifact_id}")
+            if artifact["verification_status"] == "verified":
+                raise Conflict("artifact has already been verified")
+            now = _now()
+            verification_note = note.strip()
+            db.execute(
+                """UPDATE artifacts
+                   SET verification_status = 'verified', verified_at = ?, verification_note = ?
+                   WHERE artifact_id = ? AND task_id = ?""",
+                (now, verification_note, artifact_id, task_id),
+            )
+            db.execute(
+                "UPDATE tasks SET status = 'implemented', updated_at = ? WHERE task_id = ?",
+                (now, task_id),
+            )
+            self._append_event(db, "artifact_verified", task_id, actor, {
+                "artifact_id": artifact_id,
+                "verification_status": "verified",
+                "verified_at": now,
+                "note": verification_note,
+            })
+            return dict(db.execute(
+                "SELECT * FROM artifacts WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone())
 
     def export_timeline(self, task_id: str, viewer: str = "human") -> dict[str, Any]:
         with self._connection() as db:
@@ -904,6 +1007,17 @@ class BridgeService:
                         and projection["uri"] == payload["uri"]
                         and projection["sha256"] == payload["sha256"]
                     )
+                elif kind == "artifact_verified":
+                    projection = db.execute(
+                        "SELECT * FROM artifacts WHERE artifact_id = ?",
+                        (payload["artifact_id"],),
+                    ).fetchone()
+                    matches = projection is not None and (
+                        projection["task_id"] == event["task_id"]
+                        and projection["verification_status"] == payload["verification_status"]
+                        and projection["verified_at"] == payload["verified_at"]
+                        and projection["verification_note"] == payload["note"]
+                    )
                 elif kind == "principal_issued":
                     projection = db.execute("SELECT * FROM principals WHERE principal_id = ?", (payload["principal_id"],)).fetchone()
                     matches = projection is not None and (
@@ -924,6 +1038,7 @@ class BridgeService:
             # Reconstruct workflow state from events and compare mutable projections.
             task_states: dict[str, dict[str, Any]] = {}
             decision_states: dict[str, str] = {}
+            artifact_states: dict[str, dict[str, Any]] = {}
             for event in rows:
                 kind = event["event_type"]
                 payload = json.loads(event["payload_json"])
@@ -934,6 +1049,28 @@ class BridgeService:
                         "current_decision_id": None,
                         "revealed": False,
                     }
+                elif kind == "artifact_attached":
+                    artifact_states[payload["artifact_id"]] = {
+                        "task_id": task_id,
+                        "verification_status": "pending",
+                        "verified_at": None,
+                        "verification_note": None,
+                    }
+                elif kind == "artifact_verified":
+                    artifact_id = payload["artifact_id"]
+                    if artifact_id not in artifact_states:
+                        return {
+                            "valid": False,
+                            "event_id": event["event_id"],
+                            "reason": "artifact_verified_before_attachment",
+                        }
+                    artifact_states[artifact_id] = {
+                        "task_id": task_id,
+                        "verification_status": payload["verification_status"],
+                        "verified_at": payload["verified_at"],
+                        "verification_note": payload["note"],
+                    }
+                    task_states[task_id]["status"] = "implemented"
                 elif kind in {"collection_ready", "collection_closed"}:
                     task_states[task_id]["status"] = "ready_to_reveal"
                 elif kind == "positions_revealed":
@@ -947,8 +1084,22 @@ class BridgeService:
                     decision_states[payload["decision_id"]] = payload["resulting_status"]
                     if task_states[task_id]["current_decision_id"] == payload["decision_id"]:
                         task_states[task_id]["status"] = payload["resulting_status"]
-                elif kind == "artifact_attached":
-                    task_states[task_id]["status"] = "implemented"
+            for artifact_id, expected in artifact_states.items():
+                projection = db.execute(
+                    "SELECT task_id, verification_status, verified_at, verification_note FROM artifacts WHERE artifact_id = ?",
+                    (artifact_id,),
+                ).fetchone()
+                if projection is None or (
+                    projection["task_id"] != expected["task_id"]
+                    or projection["verification_status"] != expected["verification_status"]
+                    or projection["verified_at"] != expected["verified_at"]
+                    or projection["verification_note"] != expected["verification_note"]
+                ):
+                    return {
+                        "valid": False,
+                        "reason": "artifact_state_projection_mismatch",
+                        "artifact_id": artifact_id,
+                    }
 
             for task_id, expected in task_states.items():
                 projection = db.execute("SELECT status, current_decision_id, revealed_at FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
