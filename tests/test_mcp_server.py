@@ -114,6 +114,7 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                 async with Client(owner_server_with_errors, raise_exceptions=False) as restricted_owner:
                     blocked = await restricted_owner.call_tool("action_authorize", action_args)
                     self.assertTrue(blocked.is_error)
+                    self.assertIn("human approval is required", blocked.content[0].text.lower())
 
                 # Simulate the human principal approving through the trusted CLI/HTTP path.
                 service.record_approval(
