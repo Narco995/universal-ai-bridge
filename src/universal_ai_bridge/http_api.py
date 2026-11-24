@@ -53,7 +53,6 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
         authorization = self.headers.get("Authorization", "")
         scheme, separator, token = authorization.partition(" ")
         if not separator or scheme.lower() != "bearer" or not token.strip():
-            from .core import Unauthorized
             raise Unauthorized("send a task-scoped bearer token in the Authorization header")
         return self.server.service.authenticate_principal(task_id, token.strip())
 
