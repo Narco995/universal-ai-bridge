@@ -259,7 +259,7 @@ class BridgeService:
             raise ValueError("objective is required")
         if not criteria:
             raise ValueError("at least one acceptance criterion is required")
-        if mode not in {"independent", "open"}:
+        if not isinstance(mode, str) or mode not in {"independent", "open"}:
             raise ValueError("mode must be 'independent' or 'open'")
         task_id, now = _id("task"), _now()
         with self._transaction() as db:
@@ -343,6 +343,8 @@ class BridgeService:
             return visible
 
     def close_collection(self, task_id: str, actor: str = "human", note: str = "manual close") -> dict[str, Any]:
+        if not isinstance(note, str):
+            raise ValueError("collection close note must be a string")
         with self._transaction() as db:
             task = self._task_row(db, task_id)
             if task["status"] != "collecting":
@@ -380,6 +382,8 @@ class BridgeService:
         choice, rationale = choice.strip(), rationale.strip()
         if not choice or not rationale:
             raise ValueError("choice and rationale are required")
+        if not isinstance(requires_approval, bool):
+            raise ValueError("requires_approval must be a boolean")
         supporting = list(dict.fromkeys(self._string_list(supporting_position_ids, "supporting_position_ids")))
         dissent = list(dict.fromkeys(self._string_list(considered_not_chosen_position_ids, "considered_not_chosen_position_ids")))
         if set(supporting) & set(dissent):
@@ -458,7 +462,7 @@ class BridgeService:
     ) -> dict[str, Any]:
         if actor != "human":
             raise Forbidden("only the human principal may record an approval")
-        if action not in {"approve", "reject", "request_changes"}:
+        if not isinstance(action, str) or action not in {"approve", "reject", "request_changes"}:
             raise ValueError("action must be approve, reject, or request_changes")
         if not all(isinstance(value, str) for value in (note, action_name, target, scope)):
             raise ValueError("approval note, action_name, target, and scope must be strings")
@@ -583,9 +587,14 @@ class BridgeService:
         sha256: str | None = None,
         actor: str = "human",
     ) -> dict[str, Any]:
+        if not isinstance(kind, str) or not isinstance(uri, str):
+            raise ValueError("artifact kind and uri must be strings")
         kind, uri = kind.strip(), uri.strip()
         if not kind or not uri:
             raise ValueError("artifact kind and uri are required")
+        if sha256 is not None:
+            if not isinstance(sha256, str) or len(sha256) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in sha256):
+                raise ValueError("sha256 must be a 64-character hexadecimal digest")
         artifact_id, now = _id("artifact"), _now()
         with self._transaction() as db:
             task = self._task_row(db, task_id)
@@ -728,10 +737,10 @@ class BridgeService:
                         projection["decision_id"] == payload["decision_id"]
                         and projection["actor"] == event["actor"]
                         and projection["action"] == payload["action"]
-                        and projection["action_name"] == payload["action_name"]
-                        and projection["target"] == payload["target"]
-                        and projection["scope"] == payload["scope"]
-                        and projection["expires_at"] == payload["expires_at"]
+                        and projection["action_name"] == payload.get("action_name", "")
+                        and projection["target"] == payload.get("target", "")
+                        and projection["scope"] == payload.get("scope", "")
+                        and projection["expires_at"] == payload.get("expires_at", "")
                         and projection["note"] == payload["note"]
                     )
                 elif kind == "artifact_attached":
