@@ -964,7 +964,16 @@ class BridgeService:
     def markdown_export(self, task_id: str, viewer: str = "human") -> str:
         data = self.export_timeline(task_id, viewer=viewer)
         task = data["task"]
-        lines = [f"# {task['objective']}", "", f"- Task: `{task['task_id']}`", f"- Mode: `{task['mode']}`", f"- Status: `{task['status']}`", "", "## Acceptance criteria"]
+        lines = [
+            f"# {task['objective']}",
+            "",
+            f"- Task: `{task['task_id']}`",
+            f"- Collection mode: `{task['mode']}`",
+            f"- Execution mode: `{task['execution_mode']}`",
+            f"- Status: `{task['status']}`",
+            "",
+            "## Acceptance criteria",
+        ]
         lines.extend(f"- {item}" for item in task["acceptance_criteria"])
         lines += ["", "## Positions"]
         for position in data["positions"]:
