@@ -161,9 +161,6 @@ class BridgeService:
                 """
             )
 
-                """
-            )
-
     def _append_event(
         self,
         db: sqlite3.Connection,
