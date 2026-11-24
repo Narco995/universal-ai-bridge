@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 
 from mcp import Client
-from mcp.server.mcpserver.exceptions import UnexpectedToolError
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from universal_ai_bridge.core import BridgeService
@@ -112,9 +111,9 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                     "scope": "release 1.0",
                 }
                 owner_server_with_errors = build_mcp_server(database, credentials["owner_token"])
-                async with Client(owner_server_with_errors) as restricted_owner:
-                    with self.assertRaises(UnexpectedToolError):
-                        await restricted_owner.call_tool("action_authorize", action_args)
+                async with Client(owner_server_with_errors, raise_exceptions=False) as restricted_owner:
+                    blocked = await restricted_owner.call_tool("action_authorize", action_args)
+                    self.assertTrue(blocked.is_error)
 
                 # Simulate the human principal approving through the trusted CLI/HTTP path.
                 service.record_approval(
