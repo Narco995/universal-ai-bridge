@@ -37,6 +37,10 @@ class BridgeHTTPTests(unittest.TestCase):
         data = json.loads(response.read().decode("utf-8"))
         return response.status, data
 
+    def test_server_constructor_rejects_non_loopback_binding(self):
+        with self.assertRaises(ValueError):
+            BridgeHTTPServer(("0.0.0.0", 0), self.server.service)
+
     def test_http_positions_are_sealed_by_viewer_identity(self):
         status, task = self.request_json("POST", "/tasks", {
             "objective": "Test sealed positions",
