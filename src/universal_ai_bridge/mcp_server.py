@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import argparse
 import logging
-from functools import wraps
 import os
 import sys
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from .core import BridgeError, BridgeService, Forbidden, Unauthorized
+from .core import BridgeError, BridgeService, Forbidden
 
 
 
