@@ -126,10 +126,10 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
                     self._send(201, result)
                     return
                 if len(parts) == 3 and parts[2] == "approvals":
-                    self._send(201, service.record_approval(task_id, body.get("action", ""), body.get("note", ""), actor=actor))
+                    self._send(201, service.record_approval(task_id, body.get("action", ""), body.get("note", ""), actor=actor, action_name=body.get("action_name", ""), target=body.get("target", ""), scope=body.get("scope", "")))
                     return
                 if len(parts) == 4 and parts[2:] == ["actions", "authorize"]:
-                    self._send(200, service.authorize_action(task_id, body.get("action_name", ""), actor=actor))
+                    self._send(200, service.authorize_action(task_id, body.get("action_name", ""), actor=actor, target=body.get("target", ""), scope=body.get("scope", "")))
                     return
                 if len(parts) == 3 and parts[2] == "artifacts":
                     self._send(201, service.attach_artifact(task_id, body.get("kind", ""), body.get("uri", ""), body.get("sha256"), actor=actor))
