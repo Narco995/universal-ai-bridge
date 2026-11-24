@@ -39,6 +39,7 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("position_submit", names)
                 self.assertIn("positions_reveal", names)
                 self.assertIn("timeline_export", names)
+                self.assertNotIn("task_create", names)
 
                 claude_submit = await claude.call_tool(
                     "position_submit",
@@ -83,6 +84,27 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                 integrity = await owner.call_tool("event_chain_verify", {"task_id": task_id})
                 self.assertFalse(integrity.is_error)
                 self.assertTrue(integrity.structured_content["valid"])
+
+    async def test_bootstrap_process_can_create_task_and_returns_scoped_credentials(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = Path(tmp) / "bridge.sqlite3"
+            bootstrap = build_mcp_server(database, token=None)
+            async with Client(bootstrap) as client:
+                listing = await client.list_tools()
+                self.assertIn("task_create", {tool.name for tool in listing.tools})
+                created = await client.call_tool(
+                    "task_create",
+                    {
+                        "objective": "Bootstrap a collaboration task",
+                        "acceptance_criteria": ["Issue separate participant identities"],
+                        "mode": "independent",
+                        "required_authors": ["claude", "gpt"],
+                    },
+                )
+                self.assertFalse(created.is_error)
+                credentials = created.structured_content["credentials"]
+                self.assertTrue(credentials["owner_token"])
+                self.assertEqual(set(credentials["participant_tokens"]), {"claude", "gpt"})
 
     async def test_stdio_entrypoint_uses_its_process_token_and_shared_database(self):
         with tempfile.TemporaryDirectory() as tmp:
