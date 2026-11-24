@@ -51,6 +51,41 @@ class BridgeHTTPTests(unittest.TestCase):
         self.assertEqual(status, 201)
         return task, task["credentials"]
 
+    def test_open_task_can_issue_participant_credentials(self):
+        status, task = self.request_json("POST", "/tasks", {
+            "objective": "Dynamic open collaboration",
+            "acceptance_criteria": ["Issue credentials after task creation"],
+            "mode": "open",
+            "required_authors": [],
+        })
+        self.assertEqual(status, 201)
+        owner_token = task["credentials"]["owner_token"]
+        status, issued = self.request_json(
+            "POST", f"/tasks/{task['task_id']}/participants",
+            {"name": "grok"}, token=owner_token,
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(issued["name"], "grok")
+        status, submitted = self.request_json(
+            "POST", f"/tasks/{task['task_id']}/positions",
+            {"content": "An independently issued participant can contribute"},
+            token=issued["token"],
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(submitted["author"], "grok")
+
+    def test_invalid_bearer_token_returns_401(self):
+        task, _ = self.create_task(("claude",))
+        status, response = self.request_json(
+            "GET", f"/tasks/{task['task_id']}/positions", token="not-a-valid-token",
+        )
+        self.assertEqual(status, 401)
+        self.assertEqual(response["error"], "Unauthorized")
+
+    def test_server_constructor_rejects_non_loopback_binding(self):
+        with self.assertRaises(ValueError):
+            BridgeHTTPServer(("0.0.0.0", 0), self.server.service)
+
     def test_http_positions_are_sealed_and_author_is_derived_from_token(self):
         task, credentials = self.create_task(("claude", "gpt"))
         task_id = task["task_id"]
@@ -189,11 +224,12 @@ class BridgeHTTPTests(unittest.TestCase):
             {"content": "Proposal"}, token=credentials["participant_tokens"]["claude"],
         )
         self.request_json("POST", f"/tasks/{task_id}/reveal", token=owner_token)
-        self.request_json(
+        status, decision = self.request_json(
             "POST", f"/tasks/{task_id}/decisions",
             {"choice": "A", "rationale": "It is acceptable", "requires_approval": True},
             token=owner_token,
         )
+        self.assertEqual(status, 201)
         action_request = {
             "action_name": "deploy",
             "target": "production/api",
@@ -205,13 +241,27 @@ class BridgeHTTPTests(unittest.TestCase):
         self.assertEqual(status, 423)
         self.assertEqual(response["error"], "ApprovalRequired")
 
-        approval = {
-            "action": "approve", "note": "Approved",
+        decision_approval = {
+            "action": "approve", "note": "Accepted the decision",
+            "action_name": "decision_acceptance", "target": task_id,
+            "scope": decision["decision_id"],
+        }
+        self.request_json(
+            "POST", f"/tasks/{task_id}/approvals", decision_approval, token=owner_token,
+        )
+        # Decision acceptance alone does not authorize the deployment side effect.
+        status, response = self.request_json(
+            "POST", f"/tasks/{task_id}/actions/authorize", action_request, token=owner_token,
+        )
+        self.assertEqual(status, 423)
+
+        action_approval = {
+            "action": "approve", "note": "Approved exact deployment",
             "action_name": "deploy", "target": "production/api",
             "scope": "release version 1.2.3",
         }
         self.request_json(
-            "POST", f"/tasks/{task_id}/approvals", approval, token=owner_token,
+            "POST", f"/tasks/{task_id}/approvals", action_approval, token=owner_token,
         )
         status, response = self.request_json(
             "POST", f"/tasks/{task_id}/actions/authorize", action_request, token=owner_token,
