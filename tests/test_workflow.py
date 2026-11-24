@@ -272,6 +272,35 @@ class BridgeWorkflowTests(unittest.TestCase):
                 self.task_id, "commit", "https://example.invalid/commit/expired"
             )
 
+    def test_principal_token_hash_tampering_is_detected(self):
+        token = self.task["credentials"]["participant_tokens"]["claude"]
+        principal = self.service.authenticate_principal(self.task_id, token)
+        with sqlite3.connect(self.service.database) as db:
+            db.execute(
+                "UPDATE principals SET token_hash = ? WHERE principal_id = ?",
+                ("f" * 64, principal["principal_id"]),
+            )
+        integrity = self.service.verify_event_chain()
+        self.assertFalse(integrity["valid"])
+        self.assertEqual(integrity["reason"], "projection_mismatch")
+        self.assertEqual(integrity["event_type"], "principal_issued")
+
+    def test_action_approval_alone_cannot_attach_decision_gated_artifact(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        decision = self.service.record_decision(
+            self.task_id, "A", "Requires decision acceptance", requires_approval=True
+        )
+        self.service.record_approval(
+            self.task_id, "approve", "Approved only the deployment",
+            action_name="deploy", target="production", scope="release 3.0",
+        )
+        with self.assertRaises(ApprovalRequired):
+            self.service.attach_artifact(
+                self.task_id, "commit", "https://example.invalid/commit/not-yet-approved"
+            )
+
     def test_projection_tampering_is_detected(self):
         self.service.submit_position(self.task_id, "claude", "Original position")
         with sqlite3.connect(self.service.database) as db:
