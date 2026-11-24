@@ -4,7 +4,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
-from .core import ApprovalRequired, BridgeError, BridgeService, Conflict, Forbidden, NotFound
+from .core import ApprovalRequired, BridgeError, BridgeService, Conflict, Forbidden, NotFound, Unauthorized
 
 
 class BridgeHTTPServer(ThreadingHTTPServer):
@@ -64,7 +64,6 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
         return principal
 
     def _error(self, exc: Exception) -> None:
-        from .core import Unauthorized
         if isinstance(exc, Unauthorized):
             status = 401
         elif isinstance(exc, NotFound):
@@ -81,7 +80,12 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
             status = 409
         else:
             status = 500
-        self._send(status, {"error": type(exc).__name__, "message": str(exc)})
+        if status >= 500:
+            self.log_error("Unhandled Bridge request error: %s", type(exc).__name__)
+            message = "internal server error"
+        else:
+            message = str(exc)
+        self._send(status, {"error": type(exc).__name__, "message": message})
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -129,6 +133,11 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
                     if "author" in body:
                         raise ValueError("author is derived from the bearer credential and must not be supplied")
                     result = service.submit_position(task_id, principal["name"], body.get("content", ""), actor=principal["name"])
+                    self._send(201, result)
+                    return
+                if len(parts) == 3 and parts[2] == "participants":
+                    principal = self._owner(task_id)
+                    result = service.issue_participant(task_id, body.get("name", ""), actor=principal["name"])
                     self._send(201, result)
                     return
 
