@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import tempfile
@@ -128,13 +129,21 @@ class BridgeWorkflowTests(unittest.TestCase):
         self.assertEqual(result["target"], target)
         self.assertEqual(result["scope"], scope)
 
-    def test_allowlisted_low_risk_action_does_not_need_scoped_approval(self):
+    def test_authorization_endpoint_never_trusts_a_caller_selected_low_risk_label(self):
         self.service.submit_position(self.task_id, "claude", "Option A")
         self.service.submit_position(self.task_id, "gpt", "Option B")
         self.service.reveal(self.task_id)
-        self.service.record_decision(self.task_id, "A", "Routine decision")
+        self.service.record_decision(self.task_id, "A", "Read-only actions use GET routes, not this gate")
+        with self.assertRaises(ApprovalRequired):
+            self.service.authorize_action(
+                self.task_id, "export", target="production/deploy", scope="write release 1.0"
+            )
+        self.service.record_approval(
+            self.task_id, "approve", "Approved exact operation",
+            action_name="export", target="production/deploy", scope="write release 1.0",
+        )
         result = self.service.authorize_action(
-            self.task_id, "export", target=self.task_id, scope="read-only timeline export"
+            self.task_id, "export", target="production/deploy", scope="write release 1.0"
         )
         self.assertTrue(result["authorized"])
         self.assertFalse(result["executed"])
@@ -161,6 +170,65 @@ class BridgeWorkflowTests(unittest.TestCase):
         integrity = self.service.verify_event_chain()
         self.assertFalse(integrity["valid"])
         self.assertEqual(integrity["reason"], "projection_mismatch")
+
+    def test_task_and_decision_state_projection_tampering_is_detected(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        decision = self.service.record_decision(self.task_id, "A", "Evidence-backed choice")
+        with sqlite3.connect(self.service.database) as db:
+            db.execute("UPDATE tasks SET status = 'implemented' WHERE task_id = ?", (self.task_id,))
+            db.execute("UPDATE decisions SET status = 'approved' WHERE decision_id = ?", (decision["decision_id"],))
+        integrity = self.service.verify_event_chain()
+        self.assertFalse(integrity["valid"])
+        self.assertEqual(integrity["reason"], "task_state_projection_mismatch")
+
+    def test_decision_state_tampering_is_detected_when_task_status_is_consistent(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        decision = self.service.record_decision(self.task_id, "A", "Evidence-backed choice")
+        with sqlite3.connect(self.service.database) as db:
+            db.execute("UPDATE decisions SET status = 'approved' WHERE decision_id = ?", (decision["decision_id"],))
+        integrity = self.service.verify_event_chain()
+        self.assertFalse(integrity["valid"])
+        self.assertEqual(integrity["reason"], "decision_state_projection_mismatch")
+
+    def test_task_principal_credentials_are_task_scoped_and_secrets_are_not_logged(self):
+        credentials = self.task["credentials"]
+        participant = credentials["participant_tokens"]["claude"]
+        principal = self.service.authenticate_principal(self.task_id, participant)
+        self.assertEqual(principal["name"], "claude")
+        self.assertEqual(principal["role"], "participant")
+        owner = self.service.authenticate_principal(self.task_id, credentials["owner_token"])
+        self.assertEqual(owner["role"], "owner")
+        with self.assertRaises(Exception):
+            self.service.authenticate_principal(self.task_id, "not-a-valid-token")
+        other_task = self.service.create_task("Another task", ["Independent scope"])
+        with self.assertRaises(Exception):
+            self.service.authenticate_principal(other_task["task_id"], participant)
+        exported = json.dumps(self.service.export_timeline(self.task_id))
+        self.assertNotIn(participant, exported)
+        self.assertNotIn(credentials["owner_token"], exported)
+
+    def test_expired_decision_approval_cannot_attach_artifact(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        self.service.record_decision(self.task_id, "A", "Decision requires approval", requires_approval=True)
+        approval = self.service.record_approval(
+            self.task_id, "approve", "Short-lived decision approval",
+            action_name="deploy", target="staging", scope="release 1.0",
+        )
+        with sqlite3.connect(self.service.database) as db:
+            db.execute(
+                "UPDATE approvals SET expires_at = ? WHERE approval_id = ?",
+                ("2000-01-01T00:00:00.000000+00:00", approval["approval_id"]),
+            )
+        with self.assertRaises(ApprovalRequired):
+            self.service.attach_artifact(
+                self.task_id, "commit", "https://example.invalid/commit/expired"
+            )
 
     def test_projection_tampering_is_detected(self):
         self.service.submit_position(self.task_id, "claude", "Original position")
