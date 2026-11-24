@@ -139,6 +139,26 @@ class BridgeHTTPTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(next(p for p in listing["positions"] if p["author"] == "claude")["content"], "Claude position")
 
+    def test_http_persists_execution_mode_separately_from_collection_mode(self):
+        status, task = self.request_json("POST", "/tasks", {
+            "objective": "Persist independent execution policy",
+            "acceptance_criteria": ["Auto and Manual are separate from open and independent"],
+            "mode": "independent",
+            "execution_mode": "auto",
+            "required_authors": [],
+        })
+        self.assertEqual(status, 201)
+        self.assertEqual(task["mode"], "independent")
+        self.assertEqual(task["execution_mode"], "auto")
+
+        status, error = self.request_json("POST", "/tasks", {
+            "objective": "Reject unsupported execution mode",
+            "acceptance_criteria": ["Validate execution policy"],
+            "execution_mode": "unattended",
+        })
+        self.assertEqual(status, 400)
+        self.assertIn("execution_mode must be", error["message"])
+
     def test_http_rejects_non_json_post_content_type(self):
         status, response = self.request_json(
             "POST", "/tasks",
