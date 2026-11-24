@@ -29,3 +29,4 @@ jobs:
         run: |
           uab --help
           uab participant issue --help
+          uab-mcp --help
