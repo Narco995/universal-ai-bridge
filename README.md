@@ -58,12 +58,12 @@ uab --db ./bridge.sqlite3 decision record TASK_ID \\
   --considered-not-chosen OTHER_POSITION_ID \\
   --requires-approval
 
-uab --db ./bridge.sqlite3 approval TASK_ID --action approve \\\
-  --action-name "modify_shared_infrastructure" \\\
-  --target "repository/main" \\\
-  --scope "change collaboration workflow" \\\
+uab --db ./bridge.sqlite3 approval TASK_ID --action approve \
+  --action-name "modify_shared_infrastructure" \
+  --target "repository/main" \
+  --scope "change collaboration workflow" \
   --note "Reviewed by the human principal"
-uab --db ./bridge.sqlite3 action TASK_ID --name "modify_shared_infrastructure" \\\
+uab --db ./bridge.sqlite3 action TASK_ID --name "modify_shared_infrastructure" \
   --target "repository/main" --scope "change collaboration workflow"
 uab --db ./bridge.sqlite3 export TASK_ID --format markdown --output task-TASK_ID.md
 uab --db ./bridge.sqlite3 verify events
