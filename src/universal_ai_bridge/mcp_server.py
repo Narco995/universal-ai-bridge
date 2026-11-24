@@ -84,12 +84,16 @@ def build_mcp_server(
         return principal
 
     @server.tool()
+
+    @_tool_error_boundary
     def task_get(task_id: str) -> dict[str, Any]:
         """Read metadata for the task bound to this MCP process."""
         principal_for(task_id)
         return service.get_task(task_id)
 
     @server.tool()
+
+    @_tool_error_boundary
     def positions_list(task_id: str) -> dict[str, Any]:
         """List positions visible to this principal; sealed positions remain private until reveal."""
         principal = principal_for(task_id)
@@ -97,6 +101,8 @@ def build_mcp_server(
         return {"positions": service.list_positions(task_id, viewer)}
 
     @server.tool()
+
+    @_tool_error_boundary
     def timeline_export(task_id: str) -> dict[str, Any]:
         """Export the reproducible task timeline filtered for this principal."""
         principal = principal_for(task_id)
@@ -105,6 +111,7 @@ def build_mcp_server(
 
     if identity["role"] == "participant":
         @server.tool()
+        @_tool_error_boundary
         def position_submit(task_id: str, content: str) -> dict[str, Any]:
             """Submit this participant's position; author is derived from this process's token."""
             principal = principal_for(task_id)
@@ -113,12 +120,15 @@ def build_mcp_server(
             )
     else:
         @server.tool()
+        @_tool_error_boundary
         def positions_reveal(task_id: str) -> dict[str, Any]:
             """Reveal positions once the collection is ready; owner credential required."""
             principal = owner_for(task_id)
             return service.reveal(task_id, actor=principal["name"])
 
         @server.tool()
+
+        @_tool_error_boundary
         def decision_record(
             task_id: str,
             choice: str,
@@ -140,6 +150,8 @@ def build_mcp_server(
             )
 
         @server.tool()
+
+        @_tool_error_boundary
         def action_authorize(
             task_id: str,
             action_name: str,
@@ -157,6 +169,8 @@ def build_mcp_server(
             )
 
         @server.tool()
+
+        @_tool_error_boundary
         def artifact_attach(
             task_id: str,
             kind: str,
@@ -170,6 +184,8 @@ def build_mcp_server(
             )
 
         @server.tool()
+
+        @_tool_error_boundary
         def event_chain_verify(task_id: str) -> dict[str, Any]:
             """Verify the event chain and reconstructed state; owner credential required."""
             owner_for(task_id)
