@@ -37,22 +37,35 @@ For material decisions, preserve:
 
 Do not overwrite earlier decisions. A new decision supersedes an earlier one by reference, preserving the history.
 
-## 5. Review and revision
+## 5. Default build and review protocol
 
-Review the actual artifact, diff, tests, and supporting evidence. Choose reviewers according to task fit rather than fixed model identity. Findings should state severity, evidence, requested change, and disposition. Use a bounded review cycle (five rounds by default); unresolved critical/high issues block completion unless the human explicitly accepts a documented residual risk where permitted. A positive review is not proof, and revision must close a real gap or add verifiable evidence.
+For standard software/build tasks, preserve the established Claude/GPT cycle:
 
-## 6. Dynamic task ownership
+1. Claude expands the brief into a detailed directive with objective, scope, constraints, assumptions, implementation plan, and acceptance criteria.
+2. GPT plans and performs the assigned engineering and analysis.
+3. Claude independently reviews the actual diff, runnable artifact, tests, and evidence.
+4. GPT revises against the critique and reports the resulting evidence.
+
+The first critique always triggers a revision or evidence-backed reassessment, even if the critique is positive. This is a verification pass, not permission for cosmetic churn. The standard cycle is capped at five critique/revision rounds. Unresolved critical/high issues block completion unless the human explicitly accepts a documented residual risk where permitted.
+
+This is a repeatable workflow, not a rank structure. Grok remains an equal founding peer and may contribute research, architecture, implementation, strategy, critique, or task leadership wherever it adds the most value. Task-specific leadership may change. The human principal may explicitly choose another workflow and should record the reason.
+
+## 6. Review quality
+
+Reviewers are selected according to task fit rather than fixed model identity. Findings state severity, evidence, requested change, response, and disposition. A positive review is not proof; revision must close a real gap or add verifiable evidence. Preserve minority reports and rejected objections.
+
+## 7. Dynamic task ownership
 
 Every task identifies one accountable owner, contributors, reviewers, and permitted tools. The owner coordinates delivery but does not suppress dissent. A handoff records the new owner, reason, and outstanding obligations. Specialist participants are activated only when independent expertise or parallel work materially improves the result.
 
-## 7. Human approval and tool governance
+## 8. Human approval and tool governance
 
 The Bridge enforces permissions and approvals at the tool boundary. Requiring approval is determined by action class, scope, target, and blast radius—not by which agent proposes the action. Financial operations, external communications, destructive operations, privilege expansion, production-impacting changes, and sensitive-data handling require explicit human approval. Silence and agent consensus are not approval.
 
-## 8. Evidence and provenance
+## 9. Evidence and provenance
 
 Separate facts, assumptions, hypotheses, and recommendations. Cite sources for external facts. Keep provider identity, relay method, tool execution, and verification provenance explicit. Never claim a live connection, tool execution, test pass, or completed side effect that did not occur.
 
-## 9. Completion
+## 10. Completion
 
 Completion requires acceptance criteria, working artifacts where applicable, test evidence, independent verification proportionate to risk, preserved decisions/dissent, approval evidence, and disclosure of remaining limitations. Consensus and model confidence never replace this bar.
