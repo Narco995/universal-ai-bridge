@@ -28,6 +28,10 @@ class Forbidden(BridgeError):
     pass
 
 
+class Unauthorized(BridgeError):
+    pass
+
+
 class ApprovalRequired(BridgeError):
     pass
 
@@ -320,7 +324,7 @@ class BridgeService:
     def authenticate_principal(self, task_id: str, token: str) -> dict[str, str]:
         """Resolve a task-scoped bearer token without trusting caller-supplied identity headers."""
         if not isinstance(token, str) or not token.strip():
-            raise Forbidden("a valid task-scoped bearer token is required")
+            raise Unauthorized("a valid task-scoped bearer token is required")
         digest = hashlib.sha256(token.strip().encode("utf-8")).hexdigest()
         with self._connection() as db:
             self._task_row(db, task_id)
@@ -331,7 +335,7 @@ class BridgeService:
             for row in rows:
                 if hmac.compare_digest(row["token_hash"], digest):
                     return {"principal_id": row["principal_id"], "name": row["name"], "role": row["role"]}
-        raise Forbidden("invalid task-scoped bearer token")
+        raise Unauthorized("invalid task-scoped bearer token")
 
     def submit_position(self, task_id: str, author: str, content: str, actor: str = "human") -> dict[str, Any]:
         if not isinstance(author, str) or not isinstance(content, str):
