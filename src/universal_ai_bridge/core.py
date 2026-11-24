@@ -339,6 +339,25 @@ class BridgeService:
                     return {"principal_id": row["principal_id"], "name": row["name"], "role": row["role"]}
         raise Unauthorized("invalid task-scoped bearer token")
 
+    def authenticate_principal_for_token(self, token: str) -> dict[str, str]:
+        """Resolve a task-scoped token to its one principal without caller-supplied task identity."""
+        if not isinstance(token, str) or not token.strip():
+            raise Unauthorized("a valid task-scoped bearer token is required")
+        digest = hashlib.sha256(token.strip().encode("utf-8")).hexdigest()
+        with self._connection() as db:
+            row = db.execute(
+                "SELECT principal_id, task_id, name, role, token_hash FROM principals WHERE token_hash = ?",
+                (digest,),
+            ).fetchone()
+            if row is not None and hmac.compare_digest(row["token_hash"], digest):
+                return {
+                    "principal_id": row["principal_id"],
+                    "task_id": row["task_id"],
+                    "name": row["name"],
+                    "role": row["role"],
+                }
+        raise Unauthorized("invalid task-scoped bearer token")
+
     def issue_participant(self, task_id: str, name: str, actor: str = "human") -> dict[str, str]:
         """Issue a one-time task-scoped participant credential while collection is open."""
         if not isinstance(name, str) or not name.strip():
