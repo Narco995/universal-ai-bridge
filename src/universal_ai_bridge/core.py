@@ -656,8 +656,17 @@ class BridgeService:
                     raise ApprovalRequired(
                         "human approval is required for this exact action, target, and scope"
                     )
-                if decision["requires_approval"] and decision["status"] != "approved":
-                    raise ApprovalRequired("the current decision has not been approved")
+                if decision["requires_approval"]:
+                    decision_approval = db.execute(
+                        """SELECT approval_id FROM approvals
+                           WHERE decision_id = ? AND action = 'approve'
+                             AND action_name = 'decision_acceptance'
+                             AND target = ? AND scope = ? AND expires_at > ?
+                           ORDER BY created_at DESC LIMIT 1""",
+                        (decision["decision_id"], task_id, decision["decision_id"], _now()),
+                    ).fetchone()
+                    if decision["status"] != "approved" or decision_approval is None:
+                        raise ApprovalRequired("a valid, unexpired decision-acceptance approval is required")
             if task["status"] not in {"decided", "approved", "implemented"}:
                 raise Conflict(f"task is not in an actionable state: {task['status']}")
             event = self._append_event(db, "action_authorized", task_id, actor, {
@@ -688,18 +697,13 @@ class BridgeService:
     ) -> dict[str, Any]:
         if not isinstance(kind, str) or not isinstance(uri, str):
             raise ValueError("artifact kind and uri must be strings")
-        if not isinstance(kind, str) or not isinstance(uri, str):
-            raise ValueError("artifact kind and uri must be strings")
         kind, uri = kind.strip(), uri.strip()
         if not kind or not uri:
             raise ValueError("artifact kind and uri are required")
-        if sha256 is not None and (not isinstance(sha256, str) or len(sha256) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in sha256)):
-            raise ValueError("sha256 must be a 64-character hexadecimal digest")
-        if sha256 is not None:
-            sha256 = sha256.lower()
         if sha256 is not None:
             if not isinstance(sha256, str) or len(sha256) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in sha256):
                 raise ValueError("sha256 must be a 64-character hexadecimal digest")
+            sha256 = sha256.lower()
         artifact_id, now = _id("artifact"), _now()
         with self._transaction() as db:
             task = self._task_row(db, task_id)
