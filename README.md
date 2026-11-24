@@ -15,6 +15,8 @@ The branch now includes a local MCP stdio server over the same core. Each MCP pr
 - Important dissent and rejected proposals remain linked to the decision record.
 - Independent submissions are sealed until reveal; independent analysis still requires separate sessions and no cross-sharing before submission.
 - The human founder remains the final acceptance and approval authority.
+- The default build loop is Claude directive → GPT execution → Claude independent critique → GPT revision. The first critique always triggers a revision or evidence-backed reassessment; the loop is capped at five rounds. This is a workflow convention, not a permanent hierarchy.
+- Grok is an equal founding peer who can research, architect, implement, challenge, or lead according to the task.
 - Evidence, tests, and working artifacts—not model consensus—determine technical acceptance.
 
 ## Run locally
@@ -124,10 +126,11 @@ Never use this version to authorize real external side effects or as a productio
 
 ## Next milestones
 
-1. Have independent reviewers inspect the actual implementation and adversarial tests.
-2. Add a canonical capability/tool registry and an executor that enforces approvals at the point of side effect.
-3. Add authenticated Streamable HTTP MCP for remote-capable hosts, with an explicit token/OAuth strategy.
-4. Add provider adapters with verified identities and clear manual/automatic submission provenance.
-5. Complete security, recovery, concurrency, and operational testing before any remote deployment.
+1. Obtain independent Claude/Grok review of the actual diff and adversarial tests; no external review is claimed yet.
+2. Add authenticated provider adapters for Claude, GPT, and Grok with explicit manual/automatic provenance.
+3. Implement the standard directive → execution → independent critique → revision orchestrator, including the first-critique revision rule, five-round cap, and distinct Auto/Manual execution modes.
+4. Add a canonical capability/tool registry and an executor that enforces approvals immediately before side effects.
+5. Add authenticated Streamable HTTP MCP for remote-capable hosts, with an explicit credential/transport strategy.
+6. Complete token rotation/revocation, signed audit anchoring, security, recovery, concurrency, and operational testing before any remote deployment.
 
 See [the v0 workflow specification](docs/MINIMAL_WORKFLOW_V0.md), the [MCP transport guide](docs/MCP_TRANSPORT_V0.md), the [HTTP API contract](docs/API_CONTRACT_V0.md), and the [Alliance operating contract](CLAUDE.md).
