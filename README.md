@@ -52,11 +52,18 @@ uab --db ./bridge.sqlite3 decision record TASK_ID \
   --considered-not-chosen OTHER_POSITION_ID \
   --requires-approval
 
+# Use the decision_id printed by the decision command:
+uab --db ./bridge.sqlite3 approval TASK_ID --action approve \
+  --action-name "decision_acceptance" \
+  --target "TASK_ID" --scope "DECISION_ID" \
+  --note "Human accepted the recorded decision"
+
+# Separately approve the exact side effect:
 uab --db ./bridge.sqlite3 approval TASK_ID --action approve \
   --action-name "modify_shared_infrastructure" \
   --target "repository/main" \
   --scope "change collaboration workflow" \
-  --note "Reviewed by the human principal"
+  --note "Approved this exact change"
 uab --db ./bridge.sqlite3 action TASK_ID --name "modify_shared_infrastructure" \
   --target "repository/main" --scope "change collaboration workflow"
 uab --db ./bridge.sqlite3 export TASK_ID --format markdown --output task-TASK_ID.md
@@ -82,13 +89,13 @@ Send credentials using `Authorization: Bearer <token>`. Do not send author ident
 
 Read-only endpoints include `GET /health`, `GET /tasks/{id}`, `GET /tasks/{id}/positions`, and `GET /tasks/{id}/export`. Task data routes require a task-scoped bearer token. The owner and participants can view all position bodies after reveal.
 
-Write endpoints include `POST /tasks`, `POST /tasks/{id}/positions`, `POST /tasks/{id}/close`, `POST /tasks/{id}/reveal`, `POST /tasks/{id}/decisions`, `POST /tasks/{id}/approvals`, `POST /tasks/{id}/actions/authorize`, and `POST /tasks/{id}/artifacts`.
+Write endpoints include `POST /tasks`, owner-only `POST /tasks/{id}/participants`, `POST /tasks/{id}/positions`, `POST /tasks/{id}/close`, `POST /tasks/{id}/reveal`, `POST /tasks/{id}/decisions`, `POST /tasks/{id}/approvals`, `POST /tasks/{id}/actions/authorize`, and `POST /tasks/{id}/artifacts`.
 
 ## Approval behavior
 
 The authorization endpoint is deliberately conservative: **every action authorization requires an unexpired human approval matching the exact action name, target, and scope**. Read-only GET routes do not call that endpoint. A caller cannot bypass the gate by labelling a consequential operation as `export` or another supposed low-risk action.
 
-A decision marked `requires_approval=true` enters `awaiting_approval`; a valid human approval moves it to `approved`. Artifact attachment for such a decision also checks for a still-valid approval. Approval defaults to a 15-minute validity window. The authorization endpoint records permission only; it does not execute external side effects.
+A decision marked `requires_approval=true` enters `awaiting_approval`. It requires a separate `decision_acceptance` approval bound to the task ID and decision ID before moving to `approved`. The specific side effect then needs its own approval bound to the exact action name, target, and scope. Artifact attachment for a decision requiring approval also checks that the decision-acceptance approval remains valid. Approval defaults to a 15-minute validity window. The authorization endpoint records permission only; it does not execute external side effects.
 
 ## Auditability
 
@@ -101,7 +108,7 @@ This remains a trusted, local v0 demonstration:
 - The HTTP server binds only to loopback; do not expose it to an untrusted network.
 - Task-scoped bearer tokens are random and stored as SHA-256 hashes, but there is no TLS, encryption-at-rest, revocation/rotation workflow, or secure multi-user deployment model.
 - Anyone with direct access to the SQLite file or trusted CLI can bypass application-level position filtering.
-- The person creating a task receives all participant tokens once and must distribute them separately. The system cannot prove that a named AI model authored a submission.
+- The person creating a task receives tokens for required participants once and must distribute them separately. For open tasks with no predefined authors, the owner can issue participant tokens through `POST /tasks/{id}/participants` while collection remains open. The system cannot prove that a named AI model authored a submission.
 - The current "human owner" credential is a task-scoped bearer token, not an identity-provider-backed identity.
 - No real tool executor consumes authorization results. A future executor must check authorization immediately before each side effect and enforce a capability registry that binds canonical action identifiers to actual tools and targets.
 
@@ -115,4 +122,4 @@ Never use this version to authorize real external side effects or as a productio
 4. Add provider adapters with real authenticated identities and explicit manual/automatic submission provenance.
 5. Complete security, recovery, concurrency, and operational testing before any remote deployment.
 
-See [the v0 workflow specification](docs/MINIMAL_WORKFLOW_V0.md) and the [Alliance operating contract](CLAUDE.md).
+See [the v0 workflow specification](docs/MINIMAL_WORKFLOW_V0.md), the [HTTP API contract](docs/API_CONTRACT_V0.md), and the [Alliance operating contract](CLAUDE.md).
