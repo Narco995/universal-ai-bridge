@@ -19,8 +19,10 @@ def build_mcp_server(
     """Build an MCP server whose process identity is fixed by its task-scoped token.
 
     Run one process per participant, pointing each process at the same SQLite file
-    and giving it only that participant's UAB_TOKEN. Without a token, the process
-    can create a task and inspect public health, but cannot access existing tasks.
+    and giving it only that participant's UAB_TOKEN. Create tasks, issue credentials,
+    close incomplete collections, and record human approvals through the trusted CLI
+    or loopback HTTP API. Those credential and approval operations are deliberately
+    not exposed as model-callable MCP tools. Without a token, only health is available.
     """
     db_path = database or os.environ.get("UAB_DATABASE", "bridge.sqlite3")
     process_token = token if token is not None else os.environ.get("UAB_TOKEN")
@@ -31,14 +33,16 @@ def build_mcp_server(
             "Coordinate evidence-based collaboration through the shared Bridge core. "
             "Positions are manually submitted unless a provider adapter explicitly says otherwise. "
             "Never claim a model is connected or that a side effect executed unless the tool result proves it. "
-            "Participant identity is derived from this MCP process's task-scoped credential."
+            "Participant identity is derived from this MCP process's task-scoped credential. "
+            "Task creation, participant credential issuance, early collection close, and human approval "
+            "are deliberately kept outside the model-callable MCP surface; use the trusted CLI or owner HTTP API."
         ),
     )
 
     def principal_for(task_id: str) -> dict[str, str]:
         if not process_token:
             raise Unauthorized(
-                "this MCP process has no UAB_TOKEN; create a task first, then restart with its owner or participant token"
+                "this MCP process has no UAB_TOKEN; create a task through the trusted CLI or HTTP API, then restart with its owner or participant token"
             )
         return service.authenticate_principal(task_id, process_token)
 
@@ -58,28 +62,11 @@ def build_mcp_server(
             "transport": "mcp_stdio",
         }
 
-    if not process_token:
-        @server.tool()
-        def task_create(
-            objective: str,
-            acceptance_criteria: list[str],
-            mode: str = "independent",
-            required_authors: list[str] | None = None,
-        ) -> dict[str, Any]:
-            """Create a collaboration task and return one-time owner/participant credentials."""
-            return service.create_task(objective, acceptance_criteria, mode, required_authors)
-    
     @server.tool()
     def task_get(task_id: str) -> dict[str, Any]:
         """Read task metadata using this process's task-scoped credential."""
         principal_for(task_id)
         return service.get_task(task_id)
-
-    @server.tool()
-    def participant_issue(task_id: str, name: str) -> dict[str, str]:
-        """Issue a one-time participant token; owner credential required."""
-        principal = owner_for(task_id)
-        return service.issue_participant(task_id, name, actor=principal["name"])
 
     @server.tool()
     def position_submit(task_id: str, content: str) -> dict[str, Any]:
@@ -95,12 +82,6 @@ def build_mcp_server(
         principal = principal_for(task_id)
         viewer = principal["name"] if principal["role"] == "participant" else "__task_owner__"
         return {"positions": service.list_positions(task_id, viewer)}
-
-    @server.tool()
-    def collection_close(task_id: str, note: str = "manual close") -> dict[str, Any]:
-        """Close a non-empty collection early; owner credential required."""
-        principal = owner_for(task_id)
-        return service.close_collection(task_id, actor=principal["name"], note=note)
 
     @server.tool()
     def positions_reveal(task_id: str) -> dict[str, Any]:
@@ -127,29 +108,6 @@ def build_mcp_server(
             considered_not_chosen_position_ids,
             requires_approval,
             actor=principal["name"],
-        )
-
-    @server.tool()
-    def approval_record(
-        task_id: str,
-        action: str,
-        note: str,
-        action_name: str,
-        target: str,
-        scope: str,
-        expires_at: str | None = None,
-    ) -> dict[str, Any]:
-        """Record a human approval bound to an exact action, target, and scope."""
-        principal = owner_for(task_id)
-        return service.record_approval(
-            task_id,
-            action,
-            note,
-            actor=principal["name"],
-            action_name=action_name,
-            target=target,
-            scope=scope,
-            expires_at=expires_at,
         )
 
     @server.tool()
