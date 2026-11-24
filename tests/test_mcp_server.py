@@ -60,6 +60,11 @@ class BridgeMCPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(claude_submit.is_error)
                 self.assertEqual(claude_submit.structured_content["author"], "claude")
 
+                invalid_submission = await claude.call_tool(
+                    "position_submit", {"task_id": task_id, "content": 42}
+                )
+                self.assertTrue(invalid_submission.is_error)
+
                 gpt_submit = await gpt.call_tool(
                     "position_submit",
                     {"task_id": task_id, "content": "GPT's independent implementation proposal"},
