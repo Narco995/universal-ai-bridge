@@ -99,6 +99,7 @@ class BridgeService:
                     objective TEXT NOT NULL,
                     acceptance_criteria_json TEXT NOT NULL,
                     mode TEXT NOT NULL CHECK (mode IN ('independent', 'open')),
+                    execution_mode TEXT NOT NULL DEFAULT 'manual' CHECK (execution_mode IN ('auto', 'manual')),
                     required_authors_json TEXT NOT NULL,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
@@ -187,6 +188,12 @@ class BridgeService:
             for column in ("action_name", "target", "scope", "expires_at"):
                 if column not in approval_columns:
                     db.execute(f"ALTER TABLE approvals ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+            task_columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)").fetchall()}
+            if "execution_mode" not in task_columns:
+                db.execute(
+                    "ALTER TABLE tasks ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'manual' "
+                    "CHECK (execution_mode IN ('auto', 'manual'))"
+                )
 
     def _append_event(
         self,
@@ -247,6 +254,7 @@ class BridgeService:
             "objective": row["objective"],
             "acceptance_criteria": json.loads(row["acceptance_criteria_json"]),
             "mode": row["mode"],
+            "execution_mode": row["execution_mode"],
             "required_authors": json.loads(row["required_authors_json"]),
             "status": row["status"],
             "created_at": row["created_at"],
@@ -262,6 +270,7 @@ class BridgeService:
         mode: str = "independent",
         required_authors: list[str] | None = None,
         actor: str = "human",
+        execution_mode: str = "manual",
     ) -> dict[str, Any]:
         if not isinstance(objective, str):
             raise TypeError("objective must be a string")
@@ -278,20 +287,24 @@ class BridgeService:
             raise ValueError("at least one acceptance criterion is required")
         if not isinstance(mode, str) or mode not in {"independent", "open"}:
             raise ValueError("mode must be 'independent' or 'open'")
+        if not isinstance(execution_mode, str) or execution_mode not in {"auto", "manual"}:
+            raise ValueError("execution_mode must be 'auto' or 'manual'")
         task_id, now = _id("task"), _now()
         owner_token = secrets.token_urlsafe(32)
         participant_tokens = {author: secrets.token_urlsafe(32) for author in authors}
         credentials = {"owner_token": owner_token, "participant_tokens": participant_tokens}
         with self._transaction() as db:
             db.execute(
-                """INSERT INTO tasks(task_id, objective, acceptance_criteria_json, mode, required_authors_json,
-                   status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'collecting', ?, ?)""",
-                (task_id, objective, _json(criteria), mode, _json(authors), now, now),
+                """INSERT INTO tasks(task_id, objective, acceptance_criteria_json, mode, execution_mode,
+                   required_authors_json, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 'collecting', ?, ?)""",
+                (task_id, objective, _json(criteria), mode, execution_mode, _json(authors), now, now),
             )
             self._append_event(db, "task_created", task_id, actor, {
                 "objective": objective,
                 "acceptance_criteria": criteria,
                 "mode": mode,
+                "execution_mode": execution_mode,
                 "required_authors": authors,
                 "submission_policy": "manual_until_provider_adapters_exist",
             })
@@ -848,6 +861,7 @@ class BridgeService:
                         projection["objective"] == payload["objective"]
                         and json.loads(projection["acceptance_criteria_json"]) == payload["acceptance_criteria"]
                         and projection["mode"] == payload["mode"]
+                        and projection["execution_mode"] == payload.get("execution_mode", "manual")
                         and json.loads(projection["required_authors_json"]) == payload["required_authors"]
                     )
                 elif kind == "position_submitted":
