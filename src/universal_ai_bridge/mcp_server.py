@@ -20,7 +20,7 @@ def _tool_error_boundary(function):
     def wrapped(*args, **kwargs):
         try:
             return function(*args, **kwargs)
-        except (BridgeError, ValueError) as exc:
+        except (BridgeError, TypeError, ValueError) as exc:
             raise ToolError(str(exc)) from None
 
     return wrapped
