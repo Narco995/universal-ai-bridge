@@ -6,7 +6,7 @@ A provider-neutral collaboration system for Claude, GPT, Grok, and compatible in
 
 The feature branch contains a **minimal collaboration workflow v0.1 hardening pass**: a Python standard-library service, SQLite event store, CLI, loopback-only HTTP API, task-scoped participant credentials, scoped human approvals, event replay checks, and automated tests.
 
-This is not yet a live multi-agent platform. There are no Claude, GPT, or Grok provider connections; participant positions are still manually relayed by the human operator. MCP, tool execution, remote deployment, and production hardening remain future work.
+The branch now includes a local MCP stdio server over the same core. Each MCP process has a task-scoped identity and shares the SQLite store. There are still no direct Claude, GPT, or Grok provider API connections; MCP hosts run their own models and submit through tools. Positions are manual unless the host itself submits them.
 
 ## Alliance principles
 
@@ -19,7 +19,7 @@ This is not yet a live multi-agent platform. There are no Claude, GPT, or Grok p
 
 ## Run locally
 
-Requires Python 3.10 or newer. No third-party runtime dependencies are required.
+Requires Python 3.10 or newer. Installing the package also installs the official MCP Python SDK 2.x.
 
 ```bash
 python -m venv .venv
@@ -72,6 +72,14 @@ uab --db ./bridge.sqlite3 verify events
 
 A collection becomes ready automatically when every required author has submitted. The owner may also explicitly close a non-empty collection before revealing it.
 
+## MCP stdio and per-agent identity
+
+Install the project with `python -m pip install -e .`, then configure an MCP host to launch `uab-mcp` as a stdio subprocess. Every model gets its own process, the same absolute `UAB_DATABASE` path, and only its own task-scoped `UAB_TOKEN`. The human owner uses the owner token. Participant processes cannot reveal positions, approve actions, or mint new owner credentials.
+
+A no-token bootstrap process can create a task and return one-time credentials; once configured with a token, `task_create` is not exposed. The MCP server exposes task, participant, position, reveal, decision, approval, artifact, timeline, and integrity tools. It uses the official MCP SDK and shares the same application core as CLI and HTTP.
+
+The MCP server is stdio-only in this milestone. There is no remote Streamable HTTP MCP endpoint or OAuth integration yet, and the Bridge does not call provider APIs directly. Full per-agent setup is in the [MCP transport guide](docs/MCP_TRANSPORT_V0.md).
+
 ## HTTP API and identity
 
 Start the local API:
@@ -117,9 +125,9 @@ Never use this version to authorize real external side effects or as a productio
 ## Next milestones
 
 1. Have independent reviewers inspect the actual implementation and adversarial tests.
-2. Add a canonical capability/tool registry and an executor that enforces approval at the point of side effect.
-3. Add MCP as a thin transport over the existing service.
-4. Add provider adapters with real authenticated identities and explicit manual/automatic submission provenance.
+2. Add a canonical capability/tool registry and an executor that enforces approvals at the point of side effect.
+3. Add authenticated Streamable HTTP MCP for remote-capable hosts, with an explicit token/OAuth strategy.
+4. Add provider adapters with verified identities and clear manual/automatic submission provenance.
 5. Complete security, recovery, concurrency, and operational testing before any remote deployment.
 
-See [the v0 workflow specification](docs/MINIMAL_WORKFLOW_V0.md), the [HTTP API contract](docs/API_CONTRACT_V0.md), and the [Alliance operating contract](CLAUDE.md).
+See [the v0 workflow specification](docs/MINIMAL_WORKFLOW_V0.md), the [MCP transport guide](docs/MCP_TRANSPORT_V0.md), the [HTTP API contract](docs/API_CONTRACT_V0.md), and the [Alliance operating contract](CLAUDE.md).
