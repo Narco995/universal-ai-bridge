@@ -1,6 +1,9 @@
+import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from universal_ai_bridge import ApprovalRequired, BridgeService, Conflict, Forbidden
 
@@ -135,6 +138,44 @@ class BridgeWorkflowTests(unittest.TestCase):
         )
         self.assertTrue(result["authorized"])
         self.assertFalse(result["executed"])
+
+    def test_approval_expiry_is_enforced(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        self.service.record_decision(self.task_id, "A", "Accepted")
+        approval = self.service.record_approval(
+            self.task_id, "approve", "Short-lived authorization",
+            action_name="deploy", target="staging", scope="release 1.0",
+        )
+        self.assertTrue(approval["expires_at"])
+        with sqlite3.connect(self.service.database) as db:
+            db.execute(
+                "UPDATE approvals SET expires_at = ? WHERE approval_id = ?",
+                ("2000-01-01T00:00:00.000000+00:00", approval["approval_id"]),
+            )
+        with self.assertRaises(ApprovalRequired):
+            self.service.authorize_action(
+                self.task_id, "deploy", target="staging", scope="release 1.0"
+            )
+
+    def test_expired_approval_cannot_be_created(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        self.service.record_decision(self.task_id, "A", "Accepted")
+        with self.assertRaises(ValueError):
+            self.service.record_approval(
+                self.task_id, "approve", "Expired",
+                action_name="deploy", target="production", scope="release 1.0",
+                expires_at="2000-01-01T00:00:00Z",
+            )
+
+    def test_tilde_database_path_is_expanded(self):
+        with tempfile.TemporaryDirectory() as home:
+            with patch.dict(os.environ, {"HOME": home}):
+                service = BridgeService("~/bridge-test.sqlite3")
+                self.assertEqual(service.database, str(Path(home) / "bridge-test.sqlite3"))
 
     def test_export_redacts_other_authors_before_reveal(self):
         self.service.submit_position(self.task_id, "claude", "Private initial view A")
