@@ -156,6 +156,7 @@ class BridgeService:
                     target TEXT NOT NULL DEFAULT '',
                     scope TEXT NOT NULL DEFAULT '',
                     expires_at TEXT NOT NULL DEFAULT '',
+                    consumed_at TEXT,
                     note TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
@@ -199,6 +200,8 @@ class BridgeService:
             for column in ("action_name", "target", "scope", "expires_at"):
                 if column not in approval_columns:
                     db.execute(f"ALTER TABLE approvals ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+            if "consumed_at" not in approval_columns:
+                db.execute("ALTER TABLE approvals ADD COLUMN consumed_at TEXT")
             task_columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)").fetchall()}
             if "execution_mode" not in task_columns:
                 db.execute(
@@ -714,7 +717,7 @@ class BridgeService:
                     """SELECT approval_id FROM approvals
                        WHERE decision_id = ? AND action = 'approve'
                          AND action_name = ? AND target = ? AND scope = ?
-                         AND expires_at > ?
+                         AND expires_at > ? AND consumed_at IS NULL
                        ORDER BY created_at DESC LIMIT 1""",
                     (decision["decision_id"], action_name, target, scope, _now()),
                 ).fetchone()
@@ -735,11 +738,30 @@ class BridgeService:
                         raise ApprovalRequired("a valid, unexpired decision-acceptance approval is required")
             if task["status"] not in {"decided", "approved", "implemented"}:
                 raise Conflict(f"task is not in an actionable state: {task['status']}")
+
+            # BEGIN IMMEDIATE serializes writers. Consume the exact approval in
+            # this transaction so concurrent/replayed requests cannot reuse it.
+            consumed_at = _now()
+            consumed = db.execute(
+                "UPDATE approvals SET consumed_at = ? WHERE approval_id = ? AND consumed_at IS NULL AND expires_at > ?",
+                (consumed_at, approval["approval_id"], consumed_at),
+            )
+            if consumed.rowcount != 1:
+                raise ApprovalRequired("the exact action approval has expired or has already been consumed")
+            consumed_event = self._append_event(db, "approval_consumed", task_id, actor, {
+                "approval_id": approval["approval_id"],
+                "decision_id": decision["decision_id"],
+                "action_name": action_name,
+                "target": target,
+                "scope": scope,
+                "consumed_at": consumed_at,
+            })
             event = self._append_event(db, "action_authorized", task_id, actor, {
                 "action_name": action_name,
                 "target": target,
                 "scope": scope,
                 "decision_id": decision["decision_id"],
+                "approval_id": approval["approval_id"],
                 "approval_required": approval_required,
                 "authorization_only": True,
                 "does_not_execute_side_effect": True,
@@ -749,6 +771,9 @@ class BridgeService:
                 "action_name": action_name,
                 "target": target,
                 "scope": scope,
+                "approval_id": approval["approval_id"],
+                "consumed_at": consumed_at,
+                "consumption_event_id": consumed_event["event_id"],
                 "event_id": event["event_id"],
                 "executed": False,
             }
@@ -999,6 +1024,19 @@ class BridgeService:
                         and projection["expires_at"] == payload.get("expires_at", "")
                         and projection["note"] == payload["note"]
                     )
+                elif kind == "approval_consumed":
+                    projection = db.execute(
+                        "SELECT * FROM approvals WHERE approval_id = ?",
+                        (payload["approval_id"],),
+                    ).fetchone()
+                    matches = projection is not None and (
+                        projection["decision_id"] == payload["decision_id"]
+                        and projection["action_name"] == payload["action_name"]
+                        and projection["target"] == payload["target"]
+                        and projection["scope"] == payload["scope"]
+                        and projection["consumed_at"] == payload["consumed_at"]
+                        and event["actor"] != ""
+                    )
                 elif kind == "artifact_attached":
                     projection = db.execute("SELECT * FROM artifacts WHERE artifact_id = ?", (payload["artifact_id"],)).fetchone()
                     matches = projection is not None and (
@@ -1038,6 +1076,7 @@ class BridgeService:
             # Reconstruct workflow state from events and compare mutable projections.
             task_states: dict[str, dict[str, Any]] = {}
             decision_states: dict[str, str] = {}
+            approval_states: dict[str, dict[str, Any]] = {}
             artifact_states: dict[str, dict[str, Any]] = {}
             for event in rows:
                 kind = event["event_type"]
@@ -1093,11 +1132,94 @@ class BridgeService:
                     task_states[task_id]["current_decision_id"] = payload["decision_id"]
                 elif kind == "approval_recorded":
                     decision_states[payload["decision_id"]] = payload["resulting_status"]
+                    approval_states[payload["approval_id"]] = {
+                        "task_id": task_id,
+                        "decision_id": payload["decision_id"],
+                        "action_name": payload.get("action_name", ""),
+                        "target": payload.get("target", ""),
+                        "scope": payload.get("scope", ""),
+                        "consumed_at": None,
+                        "consumed_actor": None,
+                        "authorization_recorded": False,
+                    }
                     if (
                         task_states[task_id]["current_decision_id"] == payload["decision_id"]
                         and task_states[task_id]["status"] != "implemented"
                     ):
                         task_states[task_id]["status"] = payload["resulting_status"]
+                elif kind == "approval_consumed":
+                    approval_id = payload["approval_id"]
+                    expected = approval_states.get(approval_id)
+                    if expected is None:
+                        return {
+                            "valid": False,
+                            "event_id": event["event_id"],
+                            "reason": "approval_consumed_before_recorded",
+                        }
+                    if expected["consumed_at"] is not None:
+                        return {
+                            "valid": False,
+                            "event_id": event["event_id"],
+                            "reason": "approval_consumed_more_than_once",
+                        }
+                    if (
+                        expected["task_id"] != task_id
+                        or expected["decision_id"] != payload["decision_id"]
+                        or expected["action_name"] != payload["action_name"]
+                        or expected["target"] != payload["target"]
+                        or expected["scope"] != payload["scope"]
+                        or not payload.get("consumed_at")
+                    ):
+                        return {
+                            "valid": False,
+                            "event_id": event["event_id"],
+                            "reason": "approval_consumption_scope_mismatch",
+                        }
+                    expected["consumed_at"] = payload["consumed_at"]
+                    expected["consumed_actor"] = event["actor"]
+                elif kind == "action_authorized" and payload.get("approval_id"):
+                    approval_id = payload["approval_id"]
+                    expected = approval_states.get(approval_id)
+                    if (
+                        expected is None
+                        or expected["consumed_at"] is None
+                        or expected["authorization_recorded"]
+                        or expected["task_id"] != task_id
+                        or expected["decision_id"] != payload["decision_id"]
+                        or expected["action_name"] != payload["action_name"]
+                        or expected["target"] != payload["target"]
+                        or expected["scope"] != payload["scope"]
+                        or expected["consumed_actor"] != event["actor"]
+                        or payload.get("authorization_only") is not True
+                        or payload.get("does_not_execute_side_effect") is not True
+                    ):
+                        return {
+                            "valid": False,
+                            "event_id": event["event_id"],
+                            "reason": "action_authorization_event_mismatch",
+                        }
+                    expected["authorization_recorded"] = True
+            for approval_id, expected in approval_states.items():
+                if expected["consumed_at"] is not None and not expected["authorization_recorded"]:
+                    return {
+                        "valid": False,
+                        "reason": "approval_consumption_missing_authorization_event",
+                        "approval_id": approval_id,
+                    }
+                projection = db.execute(
+                    "SELECT decision_id, consumed_at FROM approvals WHERE approval_id = ?",
+                    (approval_id,),
+                ).fetchone()
+                if projection is None or (
+                    projection["decision_id"] != expected["decision_id"]
+                    or projection["consumed_at"] != expected["consumed_at"]
+                ):
+                    return {
+                        "valid": False,
+                        "reason": "approval_state_projection_mismatch",
+                        "approval_id": approval_id,
+                    }
+
             for artifact_id, expected in artifact_states.items():
                 projection = db.execute(
                     "SELECT task_id, verification_status, verified_at, verification_note FROM artifacts WHERE artifact_id = ?",

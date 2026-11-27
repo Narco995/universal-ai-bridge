@@ -4,7 +4,9 @@ import sqlite3
 import stat
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from unittest.mock import patch
 
 from universal_ai_bridge import (
@@ -117,7 +119,7 @@ class BridgeWorkflowTests(unittest.TestCase):
         )
         exported = self.service.export_timeline(self.task_id)
         types = [event["event_type"] for event in exported["events"]]
-        for expected in ["task_created", "position_submitted", "positions_revealed", "decision_recorded", "approval_recorded", "action_authorized", "artifact_attached", "artifact_verified"]:
+        for expected in ["task_created", "position_submitted", "positions_revealed", "decision_recorded", "approval_recorded", "approval_consumed", "action_authorized", "artifact_attached", "artifact_verified"]:
             self.assertIn(expected, types)
         self.assertEqual(exported["task"]["status"], "implemented")
         markdown = self.service.markdown_export(self.task_id)
@@ -199,6 +201,91 @@ class BridgeWorkflowTests(unittest.TestCase):
         )
         self.assertTrue(result["authorized"])
         self.assertFalse(result["executed"])
+
+    def test_action_approval_is_consumed_once_and_cannot_be_replayed(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        self.service.record_decision(self.task_id, "A", "Approved action path")
+        approval = self.service.record_approval(
+            self.task_id, "approve", "One-time approval",
+            action_name="deploy", target="staging/api", scope="release 1.0",
+        )
+
+        result = self.service.authorize_action(
+            self.task_id, "deploy", target="staging/api", scope="release 1.0"
+        )
+        self.assertTrue(result["authorized"])
+        self.assertFalse(result["executed"])
+        self.assertEqual(result["approval_id"], approval["approval_id"])
+        with sqlite3.connect(self.service.database) as db:
+            consumed_at = db.execute(
+                "SELECT consumed_at FROM approvals WHERE approval_id = ?",
+                (approval["approval_id"],),
+            ).fetchone()[0]
+        self.assertTrue(consumed_at)
+        with self.assertRaises(ApprovalRequired):
+            self.service.authorize_action(
+                self.task_id, "deploy", target="staging/api", scope="release 1.0"
+            )
+        event_types = [
+            event["event_type"]
+            for event in self.service.export_timeline(self.task_id)["events"]
+        ]
+        self.assertEqual(event_types.count("approval_consumed"), 1)
+        self.assertTrue(self.service.verify_event_chain()["valid"])
+
+    def test_concurrent_action_authorization_consumes_approval_exactly_once(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        self.service.record_decision(self.task_id, "A", "Concurrent test decision")
+        self.service.record_approval(
+            self.task_id, "approve", "Single concurrent-use approval",
+            action_name="deploy", target="staging/api", scope="release 2.0",
+        )
+        barrier = Barrier(2)
+
+        def authorize():
+            barrier.wait(timeout=5)
+            try:
+                self.service.authorize_action(
+                    self.task_id, "deploy", target="staging/api", scope="release 2.0"
+                )
+                return "authorized"
+            except ApprovalRequired:
+                return "blocked"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: authorize(), range(2)))
+        self.assertCountEqual(results, ["authorized", "blocked"])
+        events = self.service.export_timeline(self.task_id)["events"]
+        self.assertEqual(
+            sum(event["event_type"] == "approval_consumed" for event in events), 1
+        )
+        self.assertTrue(self.service.verify_event_chain()["valid"])
+
+    def test_consumed_approval_projection_tampering_is_detected(self):
+        self.service.submit_position(self.task_id, "claude", "Option A")
+        self.service.submit_position(self.task_id, "gpt", "Option B")
+        self.service.reveal(self.task_id)
+        self.service.record_decision(self.task_id, "A", "Tamper-check decision")
+        approval = self.service.record_approval(
+            self.task_id, "approve", "One-time approval",
+            action_name="deploy", target="staging/api", scope="release 3.0",
+        )
+        self.service.authorize_action(
+            self.task_id, "deploy", target="staging/api", scope="release 3.0"
+        )
+        with sqlite3.connect(self.service.database) as db:
+            db.execute(
+                "UPDATE approvals SET consumed_at = ? WHERE approval_id = ?",
+                ("2099-01-01T00:00:00.000000+00:00", approval["approval_id"]),
+            )
+        integrity = self.service.verify_event_chain()
+        self.assertFalse(integrity["valid"])
+        self.assertEqual(integrity["reason"], "projection_mismatch")
+        self.assertEqual(integrity["event_type"], "approval_consumed")
 
     def test_approval_expiry_is_enforced(self):
         self.service.submit_position(self.task_id, "claude", "Option A")
@@ -538,7 +625,7 @@ class BridgeWorkflowTests(unittest.TestCase):
             BridgeService(database)
             with sqlite3.connect(database) as db:
                 columns = {row[1] for row in db.execute("PRAGMA table_info(approvals)")}
-            self.assertTrue({"action_name", "target", "scope", "expires_at"}.issubset(columns))
+            self.assertTrue({"action_name", "target", "scope", "expires_at", "consumed_at"}.issubset(columns))
             with sqlite3.connect(database) as db:
                 task_columns = {row[1] for row in db.execute("PRAGMA table_info(tasks)")}
             self.assertIn("execution_mode", task_columns)

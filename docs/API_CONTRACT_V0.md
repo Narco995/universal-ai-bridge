@@ -161,9 +161,9 @@ Requires the owner token.
 }
 ```
 
-Every call requires a matching, unexpired approval for the exact action name, target, and scope. The caller cannot bypass the gate by choosing a purported low-risk label. Read-only GET routes do not use this endpoint.
+Every call requires a matching, unexpired, **unconsumed** approval for the exact action name, target, and scope. The authorization transaction atomically marks that approval consumed and appends an `approval_consumed` audit event; replay and concurrent reuse are rejected. The caller cannot bypass the gate by choosing a purported low-risk label. Read-only GET routes do not use this endpoint.
 
-The endpoint records an authorization result only. It does **not** execute the action. A future tool executor must call the same guard immediately before the side effect.
+The endpoint records a one-time authorization result only. It does **not** execute the action. This consumes the approval, so it must not be used as a preflight check to save permission for later. A future executor should combine canonical capability validation, approval consumption, and immediate dispatch in one governed invocation; it must not perform the external side effect based solely on a previous authorization response.
 
 ### Attach artifact pointer
 

@@ -97,7 +97,9 @@ A participant can read its own sealed position before reveal. The owner can admi
 
 A decision marked `requires_approval=true` needs a separate `decision_acceptance` approval bound to its task ID and decision ID. A consequential action then needs its own exact approval matching action name, target and scope. Both approvals must remain unexpired. Approval recording is performed by the human through CLI/HTTP, not by an MCP tool.
 
-The MCP `action_authorize` tool records a permission check only. It does not execute a side effect. The MCP `artifact_attach` tool records a pending pointer but cannot mark work implemented; the human owner must separately inspect and verify the evidence. A future executor must call the authorization guard immediately before executing the real action and enforce canonical tool/capability identities.
+An action approval is one-time: the Bridge consumes it atomically inside the same SQLite write transaction as the authorization record. Replays and concurrent reuse are rejected, and an `approval_consumed` event is linked to the `action_authorized` event. The separate decision-acceptance approval remains a decision gate and is not consumed by action authorization.
+
+The MCP `action_authorize` tool consumes the one-time action approval and records a permission check only. It does not execute a side effect, so do not call it as a preflight and expect to reuse the approval later. A future executor should combine capability validation, approval consumption, and immediate dispatch in one governed tool invocation. The MCP `artifact_attach` tool records a pending pointer but cannot mark work implemented; the human owner must separately inspect and verify the evidence.
 
 ## Security limits
 
