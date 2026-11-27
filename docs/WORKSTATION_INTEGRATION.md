@@ -42,16 +42,11 @@ Claude web/mobile custom Skill installation is a separate user-facing product wo
 
 ## Security follow-up before an executor
 
-A code review of the current v0.1 authorization path found that a valid exact-scope action approval can be reused while it remains unexpired: \`authorize_action\` verifies a matching approval but does not consume it. This is a blocker for introducing a real side-effect executor.
+The initial code review identified an approval-replay defect: the v0.1 authorization path could reuse a valid exact-scope approval until expiry. A proposed correction has now been added to draft PR #1 at commit `3ce22a8` (branch `feature/minimal-collaboration-v0`).
 
-Before real execution is added, the approval subsystem needs at least:
-1. one-time approval consumption in the same transaction as the authorization decision;
-2. concurrency-safe conditional consumption (only one caller can consume a given approval);
-3. a tamper-evident approval-consumed event and projection verification;
-4. tests for replay, expiry, scope mismatch, and concurrent requests;
-5. canonical action identifiers and argument hashes before tools can perform side effects.
+The proposed correction adds a nullable `consumed_at` migration, atomically consumes an exact action approval inside the existing SQLite `BEGIN IMMEDIATE` transaction, records an `approval_consumed` event linked to `action_authorized`, and verifies the consumed projection against the event chain. Regression tests cover replay, concurrent requests (exactly one succeeds), legacy schema migration, and consumed-state tampering. Local verification passed 49 tests and Ruff; GitHub Actions for Python 3.10–3.13 were queued when this note was updated.
 
-This skills/documentation integration does not silently modify the v0.1 runtime or close that security finding.
+**Status:** the fix is proposed, not merged. The `main` branch does not yet contain it. Do not describe the mainline runtime as replay-protected until PR #1 is reviewed, merged, and its CI matrix passes. This skills/documentation PR itself remains a documentation/skills change and does not introduce a side-effect executor.
 
 ## Preservation and change management
 
