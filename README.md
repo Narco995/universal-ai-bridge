@@ -3,7 +3,7 @@
 MCP-first, provider-neutral orchestration for Claude, GPT, and compatible agents. MCP and REST adapters share one application core.
 
 ## Project status
-The repository currently contains the approved agent operating contract and v2 specifications. These documents define intended behavior; runtime enforcement and application implementation must be built and tested before the project is considered production-ready.
+The repository contains the approved agent operating contract and v2 specifications, alongside a separately proposed v0.1 runtime implementation. These documents define intended behavior; runtime enforcement and application implementation must be built and tested before the project is considered production-ready.
 
 ## Operating model
 - Claude: directive architect, director, independent critic.
@@ -22,6 +22,22 @@ Auto mode is for in-scope reversible low-risk work. Manual mode uses explicit ap
 - [Governance and security](./docs/GOVERNANCE_AND_SECURITY.md)
 - [Evaluation and acceptance](./docs/EVALUATION_AND_ACCEPTANCE.md)
 - [Architecture decisions and adoption order](./docs/ARCHITECTURE_DECISIONS.md)
+- [Workstation and Claude integration map](./docs/WORKSTATION_INTEGRATION.md)
+- [Skill pack audit](./docs/SKILL_PACK_AUDIT.md)
+
+## Skills
+
+Repository-managed skills are stored in [\`.claude/skills/\`](./.claude/skills/README.md). The central workstation operator skill covers Box, GitHub, MCP, Claude web/iPhone, permissions, and preservation. Specialist skills cover mobile engineering, UX, agent orchestration, and web performance.
+
+To mirror the skill files into the Simular Box workstation without overwriting differing files:
+
+\`\`\`bash
+python scripts/install_workstation_skills.py \
+  --source .claude/skills \
+  --destination /workspace/abinath-ai-workstation/skills
+\`\`\`
+
+These repository files do not automatically install custom Skills into Claude web/iOS. Import the desired Skills through the target product's supported workflow. Remote MCP setup is separate and requires a reachable authenticated endpoint and user-completed authorization.
 
 ## Architectural principles
 1. MCP is primary; REST is a thin adapter.
@@ -44,3 +60,5 @@ Auto mode is for in-scope reversible low-risk work. Manual mode uses explicit ap
 
 ## Security and readiness
 Do not commit credentials. Use environment variables or a secret manager. Do not claim runtime security, durability, or production readiness until the corresponding controls are implemented and tested. OAuth redesign remains deferred unless separately approved.
+
+Current v0.1 limitations remain explicit: provider APIs are not connected, positions are manually relayed, Auto/Manual is a persisted preference rather than an execution engine, HTTP is loopback-only, MCP is local stdio, and no real-world side-effect executor is present.
