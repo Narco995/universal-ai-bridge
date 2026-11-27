@@ -42,7 +42,7 @@ Claude web/mobile custom Skill installation is a separate user-facing product wo
 
 ## Security follow-up before an executor
 
-The initial code review identified an approval-replay defect: the v0.1 authorization path could reuse a valid exact-scope approval until expiry. A proposed correction has now been added to draft PR #1 at commit `3ce22a8` (branch `feature/minimal-collaboration-v0`).
+The initial code review identified an approval-replay defect: the v0.1 authorization path could reuse a valid exact-scope approval until expiry. A proposed correction has now been added to draft PR #1 at commit `0044711` (branch `feature/minimal-collaboration-v0`).
 
 The proposed correction adds a nullable `consumed_at` migration, atomically consumes an exact action approval inside the existing SQLite `BEGIN IMMEDIATE` transaction, records an `approval_consumed` event linked to `action_authorized`, and verifies the consumed projection against the event chain. Regression tests cover replay, concurrent requests (exactly one succeeds), legacy schema migration, and consumed-state tampering. Local verification passed 49 tests and Ruff; GitHub Actions for Python 3.10–3.13 were queued when this note was updated.
 
