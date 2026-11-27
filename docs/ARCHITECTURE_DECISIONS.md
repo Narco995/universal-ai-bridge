@@ -1,68 +1,43 @@
 # Architecture Decisions — Alliance and Strategy Upgrade
 
-## ADR-001: One shared application core
+## ADR-001: MCP-first, shared application core
+**Decision:** MCP is the primary interface. REST remains a thin compatibility/API adapter. Both call the same application services and domain logic.
 
-**Decision:** MCP is the intended primary interface. CLI and REST are adapters over the same application services; transport-specific validation must not duplicate business rules.
+**Rationale:** Prevent divergent behavior and duplicate policy enforcement.
 
-**Rationale:** Avoid divergent behavior and duplicated policy enforcement.
+**Consequences:** Transport adapters may validate protocol-level input, but authorization, task lifecycle, tool policy, and business rules belong in the shared core.
 
-**Consequence:** Workflow state, authorization, and domain logic belong in the shared core. The v0 CLI, HTTP API, and local MCP stdio adapter all share `BridgeService`. Remote MCP transport and provider integrations remain deferred.
+## ADR-002: Agent-neutral orchestration
+**Decision:** Claude and GPT are configured roles behind provider/model adapters, not hard-coded assumptions in domain logic.
 
-## ADR-002: Peer collaboration, dynamic task leadership
+**Rationale:** Allow provider changes and specialist expansion without redesigning the core.
 
-**Decision:** Agents are provider-neutral participants, not hard-coded permanent roles. Assign one accountable task owner and reviewers dynamically according to task fit, capabilities, and evidence. The human founder retains final acceptance and approval authority.
+## ADR-003: Persisted workflow state
+**Decision:** Model collaboration as a validated, persisted state machine with resumable execution, bounded retries, idempotency, cancellation, and audit events.
 
-**Rationale:** Prevent permanent titles from becoming implicit authority and allow all participants to contribute beyond fixed role boundaries.
+**Rationale:** Long-running agent workflows must survive process/network interruption without unsafe duplicate side effects.
 
-## ADR-003: Persisted workflow state and audit
+## ADR-004: Mandatory review protocol
+**Decision:** Claude authors/expands directives and independently critiques GPT's work. The first critique always triggers revision. Maximum five rounds. Acceptance is evidence-based.
 
-**Decision:** Model collaboration as a validated, persisted workflow with append-only decision history, explicit dissent, approval records, and reproducible artifacts. Add resumability, bounded retries, idempotency, and cancellation as execution capabilities are implemented.
-
-**Rationale:** Collaboration must survive process/network interruption without losing decisions or duplicating side effects.
-
-## ADR-004: Independent positions when they matter
-
-**Decision:** Use sealed independent positions for consequential decisions; use open mode for routine work. Preserve raw positions and objections, reveal after required submissions or human close, and retain considered-but-not-chosen positions with each decision.
-
-**Rationale:** Reduce anchoring while avoiding an unnecessary three-agent ceremony on every task.
-
-## ADR-005: Review without hierarchy
-
-**Decision:** Select reviewers dynamically. Review actual diffs, artifacts, and test evidence. Use bounded critique/revision rounds, and do not treat consensus as acceptance.
-
-**Rationale:** Independent verification improves quality without assigning permanent command authority to any model.
+## ADR-005: Dynamic specialist routing
+**Decision:** Activate specialist agents only when the task has separable work or a meaningful need for independent expertise. Default to one executor and one independent reviewer.
 
 ## ADR-006: Governance at the tool boundary
-
-**Decision:** Enforce least privilege, exact action/target/scope approval matching, separate decision-acceptance and side-effect approvals, and expiring approval gates in the bridge rather than relying on prompt wording. Every action submitted to the authorization endpoint requires an exact approval; read-only routes do not use that endpoint.
-
-**Rationale:** Model instructions cannot serve as authorization controls. v0 authenticates possession of task-scoped bearer credentials but does not verify real-world human identity or external provider identity; TLS, credential revocation, and signed approvals are required before remote or production use.
+**Decision:** Enforce least privilege, action classification, scope validation, and approval gates in the bridge rather than relying on prompt wording.
 
 ## ADR-007: Evaluation before production claims
-
 **Decision:** Add golden workflow scenarios, contract/security tests, traceability, and explicit release gates. Do not claim runtime security, durability, or production readiness until implemented and tested.
 
 ## Adoption order
-
-1. Minimal shared core, SQLite persistence, and workflow invariants (v0.1: shared core, CLI, loopback HTTP API, and MCP stdio adapter).
-2. Validate sealed positions, dissent preservation, export reproducibility, scoped approvals, task-scoped identity, and event/projection replay with automated tests.
-3. Add authenticated provider adapters and provider-account identity binding only after provider-specific state, rate limits, and failure semantics are defined.
-4. Implement the standard Claude directive → GPT execution → Claude critique → GPT revision cycle, with Grok as an equal peer and specialist routing by task.
-5. Persist Auto and Manual execution modes separately from independent/open collection mode; Auto may perform only reversible, low-risk in-scope work, while protected actions retain human approval gates.
-6. Add remote Streamable HTTP MCP with per-client authentication and transport security; do not expose the current local server remotely.
-7. Expand integration, evaluation, recovery, observability, token rotation/revocation, and operational hardening.
-
-## ADR-008: Standard build protocol and execution modes
-
-**Decision:** Preserve the standard Claude directive → GPT execution → Claude independent critique → GPT revision cycle as the default build workflow. The first critique always triggers a revision or evidence-backed reassessment, with a maximum of five review rounds. Grok remains an equal peer and may contribute or lead according to task fit. Keep Auto and Manual execution modes as a separate dimension from independent/open position-collection mode.
-
-**Rationale:** Retain the user's proven review discipline without turning workflow responsibilities into permanent model hierarchy. Keep independence, execution autonomy, and human approval as distinct controls.
-
-**Consequence:** The v0.1 workflow persists independent/open collection mode, Auto/Manual execution-mode preference, and approval records. The automated critique/revision orchestrator and runtime Auto/Manual execution policies remain future work.
+1. Repository instructions and skills (this change).
+2. Core domain types and state machine.
+3. Tool registry, permission and approval enforcement.
+4. Persistence, idempotency, retries and audit events.
+5. MCP and REST adapters over the same core.
+6. Workflow orchestration and provider adapters.
+7. Evaluation suite and operational hardening.
 
 ## Deferred
-
-- OAuth redesign: intentionally deferred; do not introduce it without a separate decision.
-- Cryptographic position sealing: deferred beyond v0; application-level filtering is not encryption.
-- External provider connections: not implemented in v0; manual relay provenance must remain explicit.
+- OAuth redesign: intentionally deferred; do not introduce it as part of this upgrade without a separate decision.
 - Framework migration: do not migrate solely for novelty. Adopt compatible patterns incrementally.
