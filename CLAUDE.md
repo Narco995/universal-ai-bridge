@@ -63,6 +63,15 @@ Activate specialists only when the task benefits materially from independent exp
 - Separate planning from execution; require explicit approval for sensitive or irreversible side effects.
 - Use deterministic tests for core logic and integration/evaluation tests for agent workflows.
 
+## Reusable skills
+The repository-managed specialist skill source lives in \`.claude/skills/\`. Use \`.claude/skills/uab-workstation-operator/SKILL.md\` for Box, GitHub, MCP, Claude web/iPhone, permissions, and workstation operations. Load the specialist skills only when relevant:
+- \`.claude/skills/android-mobile-eng/SKILL.md\`
+- \`.claude/skills/claud-uiux-pro/SKILL.md\`
+- \`.claude/skills/vibekit-agent/SKILL.md\`
+- \`.claude/skills/web-performance-architect/SKILL.md\`
+
+The skills are task guidance, not permission grants, running services, provider connections, or MCP servers. The repository operating contract and \`docs/GOVERNANCE_AND_SECURITY.md\` take precedence if a skill conflicts with them. Claude web/iOS does not automatically load this repository directory; import Skills separately through the target product's supported workflow. MCP connector setup is separate.
+
 ## Definition of done
 A task is complete only when acceptance criteria are met with observable evidence; relevant tests pass or unavailable tests are disclosed; independent review is completed within the five-round limit; security and permission boundaries are checked; material decisions are documented; and remaining risks are disclosed.
 
